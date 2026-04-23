@@ -2,6 +2,14 @@
 
 一个基于 Claude Agent SDK 和 Telegram Bot 的个人 Agent 项目。
 
+它既包含一套可以继续扩展的正式工程，也包含一份适合学习和培训的课程版代码。
+
+如果你想快速理解这个项目，推荐先看：
+
+- 正式工程入口：[src/garveyclaw](/E:/AICode/AIProRepo/garveyclaw_py/src/garveyclaw)
+- 课程版单文件：[claw_course_bot.py](/E:/AICode/AIProRepo/garveyclaw_py/claw_course_bot.py)
+- 课程教材：[COURSE_GUIDE.md](/E:/AICode/AIProRepo/garveyclaw_py/COURSE_GUIDE.md)
+
 当前项目已经具备这些能力：
 
 - 通过 Telegram 接收消息并回复
@@ -14,6 +22,48 @@
 - 支持长期记忆文件和对话记录落盘
 - 支持单次 / 每天 / 每周定时任务
 - 支持简单自然语言创建定时任务
+
+## 快速开始
+
+如果你只是想把这个 Agent 跑起来，按下面 4 步做就够了：
+
+1. 创建并激活 Conda 环境
+
+```powershell
+conda create -n garveyclaw python=3.12 -y
+conda activate garveyclaw
+```
+
+2. 安装依赖
+
+```powershell
+python -m pip install -e .
+```
+
+3. 复制环境变量模板并填写你自己的配置
+
+```powershell
+Copy-Item .env.example .env
+```
+
+至少需要改这些值：
+
+- `TELEGRAM_BOT_TOKEN`
+- `OWNER_ID`
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_BASE_URL`
+
+4. 启动正式工程
+
+```powershell
+python -m garveyclaw
+```
+
+启动成功后终端会看到：
+
+```text
+Bot is running...
+```
 
 ## 项目结构
 
@@ -135,6 +185,12 @@ garveyclaw
 Bot is running...
 ```
 
+如果你想运行课程版单文件，而不是正式工程，可以执行：
+
+```powershell
+python claw_course_bot.py
+```
+
 ## 克隆后如何替换成自己的配置
 
 如果别人把这个项目克隆到自己的电脑上，通常只需要改这几类内容就能运行：
@@ -172,6 +228,44 @@ WORKSPACE_DIR=你的项目工作区路径
 - 如果代码中的启动提示文案想一起个性化，也可以顺手调整
 
 代码逻辑本身不会因为文件名变化而失效，因为当前课程版没有依赖固定模块导入名。
+
+## 部署建议
+
+本地开发阶段，直接运行：
+
+```powershell
+python -m garveyclaw
+```
+
+如果你准备长期运行这个 Agent，建议至少做到下面几点：
+
+1. 使用独立的 Conda 环境
+
+- 不要把项目依赖混在系统 Python 或别的项目环境里
+
+2. 单独保存 `.env`
+
+- 真实 `.env` 不要上传 GitHub
+- 仓库里只保留 `.env.example`
+
+3. 保留 `data/` 和 `workspace/`
+
+- `data/` 里保存 session 和定时任务数据库
+- `workspace/` 里保存长期记忆和对话记录
+
+4. 用守护方式常驻
+
+Windows 本地可以先简单保持终端运行；如果后面上服务器，再考虑：
+
+- Windows 任务计划
+- `pm2`
+- `supervisor`
+- Docker / 容器化
+
+5. 先从 owner 单用户模式开始
+
+- 当前项目默认只服务 `OWNER_ID`
+- 这样更安全，也更适合个人 Agent 阶段
 
 ## 当前工具能力
 
