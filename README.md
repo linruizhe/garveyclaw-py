@@ -346,15 +346,3 @@ Windows 本地可以先简单保持终端运行；如果后面上服务器，再
 ## 停止运行
 
 本地开发时，直接在终端按 `Ctrl + C` 即可停止机器人。
-
-## VS Code 提示
-
-项目使用 `src` 布局。为了让 VS Code 的跳转定义、自动补全更稳定，仓库里已经提供了：
-
-- `.vscode/settings.json`
-
-如果 VS Code 没有正确识别解释器，请手动选择你的 Conda 环境，例如：
-
-```text
-D:\anaconda3\envs\garveyclaw\python.exe
-```
