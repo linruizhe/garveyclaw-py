@@ -153,7 +153,7 @@ WORKSPACE_DIR=E:\AICode\AIProRepo\garveyclaw_py\workspace
 - `ANTHROPIC_BASE_URL`：兼容 Anthropic 协议的服务地址
 - `ANTHROPIC_MODEL`：默认模型名
 - `WORKSPACE_DIR`：工具默认工作的目录；不配置时默认使用项目根目录下的 `workspace/`
-- `SCHEDULER_INTERVAL_SECONDS`：定时任务轮询间隔，默认 `10`
+- `SCHEDULER_INTERVAL_SECONDS`：定时任务轮询间隔，默认 `30`
 
 运行时还会自动在项目根目录创建：
 

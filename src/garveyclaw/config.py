@@ -19,7 +19,7 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 CLAUDE_MEMORY_FILE = MEMORY_DIR / "CLAUDE.md"
 CONVERSATIONS_DIR = MEMORY_DIR / "conversations"
 CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
-SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "10"))
+SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30"))
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
