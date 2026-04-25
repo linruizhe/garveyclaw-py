@@ -14,6 +14,7 @@ from telegram.ext import (
 from garveyclaw.access import is_owner
 from garveyclaw.claude_client import ClaudeServiceError, ask_claude
 from garveyclaw.config import TELEGRAM_BOT_TOKEN
+from garveyclaw.media_store import save_photo_message
 from garveyclaw.memory_store import append_long_term_memory, load_long_term_memory
 from garveyclaw.scheduler import (
     cancel_scheduled_task,
@@ -108,6 +109,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await reply_plain_text(update, "抱歉，机器人刚刚出了点问题。请稍后再试。")
 
 
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理图片消息：保存图片，并把本地路径和 caption 交给 Agent。"""
+
+    if not update.message:
+        return
+    if not is_owner(update):
+        return
+
+    try:
+        image_path = await save_photo_message(update.message)
+        caption = (update.message.caption or "").strip()
+        prompt = (
+            "用户上传了一张图片。\n"
+            f"图片本地路径：{image_path}\n"
+            f"用户附带说明：{caption or '无'}\n\n"
+            "请根据这张图片和用户说明进行分析。如果当前模型无法直接识别图片内容，"
+            "请明确说明能力边界，并基于文件路径给出下一步建议。"
+        )
+        response = await ask_claude(prompt, update)
+        await reply_formatted_text(update, response)
+    except ClaudeServiceError:
+        await reply_plain_text(update, "图片已保存，但这次调用模型服务失败了。请稍后再试一次。")
+    except NetworkError:
+        logger.warning("Telegram network error while handling photo", exc_info=True)
+        await reply_plain_text(update, "抱歉，当前网络连接不稳定，图片处理失败。请稍后重试。")
+    except TelegramError:
+        logger.exception("Telegram API error while handling photo")
+        await reply_plain_text(update, "抱歉，图片下载或消息发送失败了。请稍后重试。")
+    except Exception:
+        logger.exception("Unexpected error while handling photo")
+        await reply_plain_text(update, "抱歉，机器人处理图片时出了点问题。请稍后再试。")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """响应 /start，介绍当前机器人支持的主要能力。"""
 
@@ -118,7 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(
         "你好，我是你的机器人。\n\n"
-        "我可以回答问题、使用 Claude 内置工具、操作工作区，并继续之前保存的会话。\n"
+        "我可以回答问题、处理文字和图片消息、使用 Claude 内置工具、操作工作区，并继续之前保存的会话。\n"
         "还支持定时任务，例如“30秒后提醒我喝水”“每天下午3点提醒我站起来活动一下”。\n"
         "可以使用 /memory 查看长期记忆，使用 /remember 追加长期记忆，使用 /reset 清空当前会话。\n"
         "使用 /skills 查看当前可用的 skills。\n"
@@ -312,6 +346,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("schedule_in", schedule_in))
     app.add_handler(CommandHandler("tasks", list_tasks))
     app.add_handler(CommandHandler("cancel", cancel_task))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     return app

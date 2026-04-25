@@ -16,6 +16,11 @@ SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
 WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", str(PROJECT_ROOT / "workspace"))).resolve()
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR = WORKSPACE_DIR / "uploads"
+UPLOAD_IMAGES_DIR = UPLOADS_DIR / "images"
+UPLOAD_VOICES_DIR = UPLOADS_DIR / "voices"
+UPLOAD_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 MEMORY_DIR = WORKSPACE_DIR / "memory"
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 CLAUDE_MEMORY_FILE = MEMORY_DIR / "CLAUDE.md"
