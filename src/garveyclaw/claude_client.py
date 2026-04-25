@@ -18,6 +18,7 @@ from garveyclaw.config import (
     ANTHROPIC_BASE_URL,
     ANTHROPIC_MODEL,
     CLAUDE_TOOLS_PRESET,
+    SHOW_TOOL_TRACE,
     WORKSPACE_DIR,
 )
 from garveyclaw.memory_store import append_conversation_record, load_long_term_memory
@@ -122,7 +123,7 @@ async def run_agent(prompt: str, bot, chat_id: int, continue_session: bool) -> s
         system_prompt=build_system_prompt(prompt),
         mcp_servers={"garveyclaw": tool_server},
         allowed_tools=ALLOWED_TOOLS,
-        hooks=build_tool_hooks(bot, chat_id),
+        hooks=build_tool_hooks(bot, chat_id) if SHOW_TOOL_TRACE else {},
         continue_conversation=continue_session and bool(saved_session_id),
         resume=saved_session_id,
     )
