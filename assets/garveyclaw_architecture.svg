@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 920" fill="none">
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     .h1 { font-size: 28px; font-weight: 800; fill: #0f172a; letter-spacing: -0.6px; }
@@ -12,7 +12,7 @@
   </style>
 
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1120" y2="760" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="1120" y2="920" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#f8fafc"/>
       <stop offset="0.55" stop-color="#eef6ff"/>
       <stop offset="1" stop-color="#f8f3ff"/>
@@ -43,7 +43,7 @@
     </marker>
   </defs>
 
-  <rect width="1120" height="760" rx="30" fill="url(#bg)"/>
+  <rect width="1120" height="920" rx="30" fill="url(#bg)"/>
   <circle cx="126" cy="115" r="90" fill="#38bdf8" opacity="0.10"/>
   <circle cx="1002" cy="650" r="128" fill="#fb7185" opacity="0.08"/>
   <circle cx="870" cy="120" r="62" fill="#f97316" opacity="0.08"/>
@@ -53,15 +53,16 @@
 
   <!-- Main request path -->
   <text x="64" y="124" class="h2">User Interface</text>
-  <rect x="54" y="142" width="222" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="54" y="142" width="222" height="178" rx="24" fill="#ffffff"/>
   <text x="82" y="182" class="title">Telegram User</text>
   <text x="82" y="206" class="sub">Text / Photo / Voice</text>
-  <text x="82" y="228" class="sub">Commands, reminders, and media messages</text>
-  <rect x="82" y="258" width="150" height="34" rx="13" fill="#eff6ff" stroke="#bfdbfe"/>
-  <text x="106" y="280" class="pill">Owner-only access</text>
+  <text x="82" y="228" class="sub">Commands and reminders</text>
+  <text x="82" y="250" class="sub">Media messages</text>
+  <rect x="82" y="268" width="150" height="34" rx="13" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="106" y="290" class="pill">Owner-only access</text>
 
   <text x="348" y="124" class="h2">Bot Layer</text>
-  <rect x="330" y="142" width="260" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="330" y="142" width="260" height="178" rx="24" fill="#ffffff"/>
   <text x="358" y="174" class="title">telegram_bot.py</text>
   <text x="358" y="197" class="sub">Routes messages, commands, errors</text>
   <text x="358" y="218" class="sub">Formats Telegram-safe replies</text>
@@ -72,10 +73,10 @@
   <text x="480" y="279" class="mono">/skills</text>
 
   <path d="M276 230 C300 230 304 230 330 230" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
-  <text x="285" y="215" class="flow">updates</text>
+  <text x="284" y="219" class="flow">updates</text>
 
   <text x="458" y="366" class="h2">Agent Core</text>
-  <rect x="400" y="380" width="320" height="178" rx="28" fill="url(#agent)" stroke="#bfdbfe" stroke-width="1.4" filter="url(#shadow)"/>
+  <rect x="400" y="380" width="320" height="178" rx="28" fill="url(#agent)" stroke="#bfdbfe" stroke-width="1.4"/>
   <rect x="422" y="402" width="120" height="34" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
   <text x="442" y="424" class="mono" fill="#1d4ed8">Agent Core</text>
   <text x="430" y="464" class="title">claude_client.py</text>
@@ -91,7 +92,7 @@
   <text x="516" y="346" class="flow">prompt</text>
 
   <text x="830" y="124" class="h2">Claude Runtime</text>
-  <rect x="774" y="142" width="306" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="774" y="142" width="306" height="178" rx="24" fill="#ffffff"/>
   <rect x="802" y="166" width="66" height="58" rx="18" fill="url(#sdk)"/>
   <text x="820" y="202" class="title" fill="#ffffff">SDK</text>
   <text x="892" y="178" class="title">Claude Agent SDK</text>
@@ -103,7 +104,7 @@
   <path d="M720 448 C790 448 774 250 774 230" stroke="#f97316" stroke-width="2.2" marker-end="url(#arrow-orange)"/>
   <text x="742" y="404" class="flow">SDK stream</text>
 
-  <rect x="820" y="380" width="244" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="820" y="380" width="244" height="178" rx="24" fill="#ffffff"/>
   <text x="848" y="414" class="title">Model Gateway</text>
   <text x="848" y="438" class="sub">Anthropic-compatible endpoint</text>
   <text x="848" y="460" class="sub">DeepSeek / Qwen / Claude-like APIs</text>
@@ -113,7 +114,7 @@
 
   <!-- Capabilities -->
   <text x="70" y="388" class="h2">Media Pipeline</text>
-  <rect x="54" y="406" width="274" height="152" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="54" y="406" width="274" height="152" rx="24" fill="#ffffff"/>
   <text x="82" y="440" class="title">media_store.py</text>
   <text x="82" y="462" class="sub">Photos saved to workspace/uploads/images</text>
   <text x="82" y="483" class="sub">Voices saved to workspace/uploads/voices</text>
@@ -122,32 +123,49 @@
   <path d="M330 482 C356 482 368 482 400 482" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
 
   <text x="72" y="610" class="h2">Tools</text>
-  <rect x="54" y="628" width="274" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="54" y="628" width="274" height="84" rx="22" fill="#ffffff"/>
   <text x="82" y="658" class="title">agent_tools.py</text>
   <text x="82" y="680" class="sub">MCP tools: time, files, send_message</text>
   <text x="82" y="700" class="sub">Claude tools: Read, Write, WebSearch, Bash</text>
   <path d="M328 670 C380 670 395 560 450 540" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
 
   <text x="432" y="616" class="h2">State and Knowledge</text>
-  <rect x="400" y="628" width="320" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="400" y="628" width="320" height="84" rx="22" fill="#ffffff"/>
   <text x="428" y="658" class="title">Local runtime state</text>
   <text x="428" y="680" class="sub">data/session.json, data/tasks.db</text>
   <text x="428" y="700" class="sub">workspace/memory, conversations, uploads</text>
   <path d="M560 628 C560 600 560 586 560 558" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
 
-  <text x="812" y="616" class="h2">Schedules and Skills</text>
-  <rect x="790" y="628" width="274" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
-  <text x="818" y="658" class="title">scheduler.py + skill_store.py</text>
-  <text x="818" y="680" class="sub">Natural-language reminders and recurring jobs</text>
-  <text x="818" y="700" class="sub">Skills: table analysis and validation</text>
-  <path d="M842 628 C805 600 740 556 690 536" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="812" y="608" class="h2">Skills</text>
+  <rect x="790" y="620" width="274" height="78" rx="22" fill="#ffffff"/>
+  <text x="818" y="651" class="title">skill_store.py</text>
+  <text x="818" y="673" class="sub">Loads table analysis skill prompts</text>
+  <text x="818" y="691" class="sub">Injected into Agent context when needed</text>
+  <path d="M790 650 C748 628 710 578 670 540" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
 
-  <!-- Response path -->
-  <path d="M820 528 C730 610 420 610 246 302" stroke="#2563eb" stroke-width="1.8" stroke-opacity="0.45" stroke-dasharray="7 8" marker-end="url(#arrow-blue)"/>
-  <text x="520" y="600" class="flow">reply path</text>
+  <text x="72" y="760" class="h2">Scheduler Flow</text>
+  <rect x="54" y="774" width="1010" height="112" rx="24" fill="#ffffff"/>
+  <text x="82" y="808" class="title">scheduler.py</text>
+  <text x="82" y="832" class="sub">Create durable tasks from Telegram input.</text>
+  <text x="82" y="852" class="sub">Run due tasks through Agent Core.</text>
 
-  <!-- Footer legend -->
-  <rect x="54" y="728" width="1010" height="1" fill="#cbd5e1"/>
-  <text x="56" y="746" class="tiny">Runtime privacy: .env, data/, workspace/memory/, and workspace/uploads/ are local-only and ignored by Git.</text>
-  <text x="806" y="746" class="tiny">Entry point: python -m garveyclaw</text>
+  <rect x="382" y="798" width="126" height="38" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="408" y="822" class="mono">parse</text>
+  <text x="386" y="858" class="tiny">parse_natural_schedule()</text>
+  <path d="M510 817 L536 817" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="540" y="798" width="132" height="38" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="578" y="822" class="mono">create</text>
+  <text x="544" y="858" class="tiny">create_scheduled_task()</text>
+  <path d="M674 817 L700 817" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="704" y="798" width="88" height="38" rx="14" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="728" y="822" class="mono">tasks.db</text>
+  <path d="M794 817 L820 817" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="824" y="798" width="104" height="38" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="852" y="822" class="mono">check</text>
+  <text x="842" y="858" class="tiny">task check</text>
+  <path d="M930 817 L956 817" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="960" y="798" width="76" height="38" rx="14" fill="#ecfdf5" stroke="#bbf7d0"/>
+  <text x="980" y="822" class="mono">run</text>
+  <text x="962" y="858" class="tiny">agent + reply</text>
+  <path d="M998 798 C940 720 792 580 676 540" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
 </svg>
