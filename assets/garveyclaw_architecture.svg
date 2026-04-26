@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" fill="none">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .h1 { font-size: 28px; font-weight: 800; fill: #0f172a; letter-spacing: -0.6px; }
+    .h2 { font-size: 15px; font-weight: 750; fill: #334155; letter-spacing: -0.1px; }
+    .title { font-size: 15px; font-weight: 750; fill: #0f172a; }
+    .sub { font-size: 11.5px; fill: #64748b; }
+    .tiny { font-size: 10px; fill: #64748b; }
+    .mono { font-size: 10px; fill: #475569; font-family: "SF Mono", "Cascadia Code", "Fira Code", monospace; }
+    .pill { font-size: 10.5px; font-weight: 700; fill: #334155; }
+    .flow { font-size: 11px; font-weight: 700; fill: #64748b; letter-spacing: 0.8px; }
+  </style>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1120" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="0.55" stop-color="#eef6ff"/>
+      <stop offset="1" stop-color="#f8f3ff"/>
+    </linearGradient>
+    <linearGradient id="telegram" x1="66" y1="98" x2="214" y2="244" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="agent" x1="400" y1="380" x2="720" y2="558" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <linearGradient id="sdk" x1="795" y1="100" x2="1034" y2="286" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb7185"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 4 L1 7" stroke="#94a3b8" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 4 L1 7" stroke="#2563eb" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 4 L1 7" stroke="#f97316" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1120" height="760" rx="30" fill="url(#bg)"/>
+  <circle cx="126" cy="115" r="90" fill="#38bdf8" opacity="0.10"/>
+  <circle cx="1002" cy="650" r="128" fill="#fb7185" opacity="0.08"/>
+  <circle cx="870" cy="120" r="62" fill="#f97316" opacity="0.08"/>
+
+  <text x="56" y="58" class="h1">GarveyClaw Py Architecture</text>
+  <text x="58" y="83" class="sub">Telegram-first personal AI agent powered by Claude Agent SDK, tools, memory, schedules, skills, media, and local ASR.</text>
+
+  <!-- Main request path -->
+  <text x="64" y="124" class="h2">User Interface</text>
+  <rect x="54" y="142" width="222" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="82" y="182" class="title">Telegram User</text>
+  <text x="82" y="206" class="sub">Text / Photo / Voice</text>
+  <text x="82" y="228" class="sub">Commands, reminders, and media messages</text>
+  <rect x="82" y="258" width="150" height="34" rx="13" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="106" y="280" class="pill">Owner-only access</text>
+
+  <text x="348" y="124" class="h2">Bot Layer</text>
+  <rect x="330" y="142" width="260" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="358" y="174" class="title">telegram_bot.py</text>
+  <text x="358" y="197" class="sub">Routes messages, commands, errors</text>
+  <text x="358" y="218" class="sub">Formats Telegram-safe replies</text>
+  <text x="358" y="239" class="sub">Saves uploads and handles ASR</text>
+  <rect x="358" y="260" width="92" height="30" rx="12" fill="#f1f5f9"/>
+  <text x="376" y="279" class="mono">/reset</text>
+  <rect x="462" y="260" width="92" height="30" rx="12" fill="#f1f5f9"/>
+  <text x="480" y="279" class="mono">/skills</text>
+
+  <path d="M276 230 C300 230 304 230 330 230" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+  <text x="285" y="215" class="flow">updates</text>
+
+  <text x="458" y="366" class="h2">Agent Core</text>
+  <rect x="400" y="380" width="320" height="178" rx="28" fill="url(#agent)" stroke="#bfdbfe" stroke-width="1.4" filter="url(#shadow)"/>
+  <rect x="422" y="402" width="120" height="34" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="442" y="424" class="mono" fill="#1d4ed8">Agent Core</text>
+  <text x="430" y="464" class="title">claude_client.py</text>
+  <text x="430" y="489" class="sub">Builds prompt, session, memory, tools</text>
+  <text x="430" y="511" class="sub">Runs Claude Agent SDK query stream</text>
+  <text x="430" y="533" class="sub">Parses assistant text and tool events</text>
+  <rect x="558" y="408" width="64" height="28" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="575" y="426" class="mono">hooks</text>
+  <rect x="634" y="408" width="56" height="28" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="651" y="426" class="mono">tools</text>
+
+  <path d="M500 320 C500 348 520 356 548 380" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="516" y="346" class="flow">prompt</text>
+
+  <text x="830" y="124" class="h2">Claude Runtime</text>
+  <rect x="774" y="142" width="306" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="802" y="166" width="66" height="58" rx="18" fill="url(#sdk)"/>
+  <text x="820" y="202" class="title" fill="#ffffff">SDK</text>
+  <text x="892" y="178" class="title">Claude Agent SDK</text>
+  <text x="892" y="200" class="sub">Uses bundled Claude CLI first</text>
+  <text x="892" y="221" class="sub">Fallback: PATH claude</text>
+  <rect x="802" y="250" width="250" height="42" rx="14" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="842" y="275" class="mono">_bundled/claude.exe</text>
+
+  <path d="M720 448 C790 448 774 250 774 230" stroke="#f97316" stroke-width="2.2" marker-end="url(#arrow-orange)"/>
+  <text x="742" y="404" class="flow">SDK stream</text>
+
+  <rect x="820" y="380" width="244" height="178" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="848" y="414" class="title">Model Gateway</text>
+  <text x="848" y="438" class="sub">Anthropic-compatible endpoint</text>
+  <text x="848" y="460" class="sub">DeepSeek / Qwen / Claude-like APIs</text>
+  <rect x="848" y="492" width="166" height="34" rx="13" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="870" y="514" class="mono">ANTHROPIC_BASE_URL</text>
+  <path d="M930 320 C930 348 930 350 930 380" stroke="#f97316" stroke-width="1.9" marker-end="url(#arrow-orange)"/>
+
+  <!-- Capabilities -->
+  <text x="70" y="388" class="h2">Media Pipeline</text>
+  <rect x="54" y="406" width="274" height="152" rx="24" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="82" y="440" class="title">media_store.py</text>
+  <text x="82" y="462" class="sub">Photos saved to workspace/uploads/images</text>
+  <text x="82" y="483" class="sub">Voices saved to workspace/uploads/voices</text>
+  <text x="82" y="512" class="title">speech_client.py</text>
+  <text x="82" y="534" class="sub">ffmpeg converts audio, Vosk transcribes</text>
+  <path d="M330 482 C356 482 368 482 400 482" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <text x="72" y="610" class="h2">Tools</text>
+  <rect x="54" y="628" width="274" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="82" y="658" class="title">agent_tools.py</text>
+  <text x="82" y="680" class="sub">MCP tools: time, files, send_message</text>
+  <text x="82" y="700" class="sub">Claude tools: Read, Write, WebSearch, Bash</text>
+  <path d="M328 670 C380 670 395 560 450 540" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <text x="432" y="616" class="h2">State and Knowledge</text>
+  <rect x="400" y="628" width="320" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="428" y="658" class="title">Local runtime state</text>
+  <text x="428" y="680" class="sub">data/session.json, data/tasks.db</text>
+  <text x="428" y="700" class="sub">workspace/memory, conversations, uploads</text>
+  <path d="M560 628 C560 600 560 586 560 558" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <text x="812" y="616" class="h2">Schedules and Skills</text>
+  <rect x="790" y="628" width="274" height="84" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+  <text x="818" y="658" class="title">scheduler.py + skill_store.py</text>
+  <text x="818" y="680" class="sub">Natural-language reminders and recurring jobs</text>
+  <text x="818" y="700" class="sub">Skills: table analysis and validation</text>
+  <path d="M842 628 C805 600 740 556 690 536" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- Response path -->
+  <path d="M820 528 C730 610 420 610 246 302" stroke="#2563eb" stroke-width="1.8" stroke-opacity="0.45" stroke-dasharray="7 8" marker-end="url(#arrow-blue)"/>
+  <text x="520" y="600" class="flow">reply path</text>
+
+  <!-- Footer legend -->
+  <rect x="54" y="728" width="1010" height="1" fill="#cbd5e1"/>
+  <text x="56" y="746" class="tiny">Runtime privacy: .env, data/, workspace/memory/, and workspace/uploads/ are local-only and ignored by Git.</text>
+  <text x="806" y="746" class="tiny">Entry point: python -m garveyclaw</text>
+</svg>
