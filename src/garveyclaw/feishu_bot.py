@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, P2ImMessageReceiveV1
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+    GetMessageResourceRequest,
+    P2ImMessageReceiveV1,
+)
 
 from garveyclaw.agent_client import AgentServiceError, run_agent
 from garveyclaw.agent_response import AgentReply
@@ -19,6 +24,7 @@ from garveyclaw.config import (
     FEISHU_REPLY_PROCESSING_MESSAGE,
     FEISHU_SESSION_SCOPE_PREFIX,
 )
+from garveyclaw.media_store import PhotoPayload
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,8 @@ ALLOWED_OPEN_IDS = parse_csv_set(FEISHU_ALLOWED_OPEN_IDS)
 ALLOWED_CHAT_IDS = parse_csv_set(FEISHU_ALLOWED_CHAT_IDS)
 SEEN_MESSAGE_IDS: set[str] = set()
 
+# 飞书交互式卡片消息使用 lark_md 标签，原生支持 Markdown 渲染。
+
 
 @dataclass(slots=True)
 class FeishuIncomingMessage:
@@ -38,7 +46,8 @@ class FeishuIncomingMessage:
     chat_id: str
     sender_open_id: str
     chat_type: str
-    text: str
+    text: str = ""
+    image_key: str | None = None
 
 
 @dataclass(slots=True)
@@ -110,8 +119,21 @@ def parse_incoming_message(data: P2ImMessageReceiveV1) -> FeishuIncomingMessage 
         return None
 
     message_type = getattr(message, "message_type", "")
-    if message_type != "text":
+    if message_type not in {"text", "image"}:
         return None
+
+    if message_type == "image":
+        content = json.loads(getattr(message, "content", "{}") or "{}")
+        image_key = content.get("image_key", "")
+        if not image_key:
+            return None
+        return FeishuIncomingMessage(
+            message_id=getattr(message, "message_id", ""),
+            chat_id=getattr(message, "chat_id", ""),
+            sender_open_id=get_nested_attr(event, "sender.sender_id.open_id"),
+            chat_type=getattr(message, "chat_type", ""),
+            image_key=image_key,
+        )
 
     return FeishuIncomingMessage(
         message_id=getattr(message, "message_id", ""),
@@ -122,9 +144,40 @@ def parse_incoming_message(data: P2ImMessageReceiveV1) -> FeishuIncomingMessage 
     )
 
 
+async def download_image(client: lark.Client, message_id: str, file_key: str) -> bytes:
+    """把飞书图片下载到内存。"""
+
+    request = (
+        GetMessageResourceRequest.builder()
+        .message_id(message_id)
+        .file_key(file_key)
+        .type("image")
+        .build()
+    )
+    response = await client.im.v1.message_resource.aget(request)
+    if response.file is not None:
+        return response.file.read()
+    raw = getattr(response, "raw", None)
+    raw_content = getattr(raw, "content", b"") if raw else b""
+    detail = raw_content.decode("utf-8", errors="replace") if raw_content else ""
+    raise RuntimeError(f"Feishu image download failed: code={response.code}, msg={response.msg}, detail={detail}")
+
+
 async def send_text_message(client: lark.Client, chat_id: str, text: str) -> None:
+    """发送交互式富文本卡片消息，lark_md 原生支持 Markdown 渲染。"""
+
     if not text.strip():
         return
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "elements": [
+            {
+                "tag": "div",
+                "text": {"content": text, "tag": "lark_md"},
+            },
+        ],
+    }
 
     request = (
         CreateMessageRequest.builder()
@@ -132,8 +185,8 @@ async def send_text_message(client: lark.Client, chat_id: str, text: str) -> Non
         .request_body(
             CreateMessageRequestBody.builder()
             .receive_id(chat_id)
-            .msg_type("text")
-            .content(json.dumps({"text": text}, ensure_ascii=False))
+            .msg_type("interactive")
+            .content(json.dumps(card, ensure_ascii=False))
             .build()
         )
         .build()
@@ -157,7 +210,7 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
         logger.info("Skip duplicate Feishu message: %s", incoming.message_id)
         return
 
-    if not incoming.text:
+    if not incoming.text and not incoming.image_key:
         return
 
     if not is_allowed_message(incoming):
@@ -169,12 +222,29 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
 
     bot = FeishuBotAdapter(client)
     try:
+        if incoming.image_key:
+            image_data = await download_image(client, incoming.message_id, incoming.image_key)
+            photo_payload = PhotoPayload(data=image_data, mime_type="image/jpeg")
+            caption = incoming.text or "无"
+            prompt = (
+                "用户上传了一张图片。\n"
+                f"用户附带说明：{caption}\n\n"
+                "请先调用 get_uploaded_image 工具获取本轮图片内容，"
+                "再结合图片和用户说明进行分析，并直接给出有帮助的中文回答。"
+            )
+            record_text = f"[Feishu] 用户上传了一张图片。说明：{caption}"
+        else:
+            prompt = incoming.text
+            record_text = f"[Feishu] {incoming.text}"
+            photo_payload = None
+
         reply = await run_agent(
-            prompt=incoming.text,
+            prompt=prompt,
             bot=bot,
             chat_id=incoming.chat_id,
             continue_session=True,
-            record_text=f"[Feishu] {incoming.text}",
+            record_text=record_text,
+            uploaded_image=photo_payload,
             session_scope=build_session_scope(incoming),
         )
         await reply_agent_result(client, incoming.chat_id, reply)
