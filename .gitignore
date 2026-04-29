@@ -15,6 +15,9 @@ wheels/
 # Local environment and secrets
 .env
 
+# Claude Code local session memory
+.claude/
+
 # Runtime data and private local state
 data/
 workspace/memory/CLAUDE.md
