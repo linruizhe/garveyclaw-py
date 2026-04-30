@@ -38,6 +38,20 @@ FILE_REFERENCE_PATTERN = re.compile(r"(?:src|workspace|data|assets|skills|script
 TASK_INTENT_PATTERN = re.compile(r"(帮我|请你|实现|修改|优化|重构|添加|增加|修复|排查|检查|分析|设计|整理|更新|刷新|生成|创建)")
 QUESTION_INTENT_PATTERN = re.compile(r"(吗|么|什么|为何|为什么|如何|咋|怎么|哪|多少|是否|可不可以|能不能|\?|？)")
 FILE_WORK_INTENT_PATTERN = re.compile(r"(文件|代码|模块|函数|类|路径|README|SVG|架构图|session|记忆|上下文|prompt)")
+MEMORY_SLOT_PATTERNS = {
+    "profile": {
+        "addressing_user": re.compile(r"(叫我|称呼我|Boss)", re.IGNORECASE),
+        "assistant_name": re.compile(r"(叫你|你叫|马里奥)", re.IGNORECASE),
+    },
+    "preferences": {
+        "language": re.compile(r"(中文|英文|用中文|用英文|回答语言|聊天语言)", re.IGNORECASE),
+        "style": re.compile(r"(简洁|详细|精简|展开|直接一点|详细一点)", re.IGNORECASE),
+    },
+    "rules": {
+        "channel_emphasis": re.compile(r"(强调 Telegram|强调飞书|强调 TUI|默认强调)", re.IGNORECASE),
+        "reply_rule": re.compile(r"(回答我时|以后回答|下次回答|回复时)", re.IGNORECASE),
+    },
+}
 
 
 def _sanitize_scope(scope: str | None) -> str:
@@ -187,6 +201,44 @@ def _extract_decision_candidate(assistant_reply: str, intent_type: str) -> str:
     return compact[:160]
 
 
+def _normalize_memory_note(note: str) -> str:
+    return note.strip().replace("\n", " ")
+
+
+def _detect_memory_slot(category: str, note: str) -> str | None:
+    category_patterns = MEMORY_SLOT_PATTERNS.get(category, {})
+    for slot, pattern in category_patterns.items():
+        if pattern.search(note):
+            return slot
+    return None
+
+
+def _merge_structured_memory(path: Path, category: str, note: str, timestamp: str, slot: str | None = None) -> bool:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    normalized_note = _normalize_memory_note(note)
+    if normalized_note in existing:
+        return False
+
+    lines = existing.splitlines()
+    slot = slot or _detect_memory_slot(category, normalized_note)
+    if slot is not None:
+        pattern = MEMORY_SLOT_PATTERNS[category][slot]
+        filtered: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- ") and pattern.search(stripped):
+                continue
+            filtered.append(line)
+        lines = filtered
+
+    if lines and lines[-1].strip() != "":
+        lines.append("")
+    lines.append(f"## 自动记忆 {timestamp}")
+    lines.append(f"- {normalized_note}")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return True
+
+
 def load_long_term_memory() -> str:
     ensure_memory_files()
     return CLAUDE_MEMORY_FILE.read_text(encoding="utf-8")
@@ -199,14 +251,13 @@ def append_long_term_memory(note: str) -> None:
         file.write(f"\n## 追加记忆 {timestamp}\n- {note.strip()}\n")
 
 
-def append_structured_long_term_memory(note: str, category: str) -> Path:
+def append_structured_long_term_memory(note: str, category: str, slot: str | None = None) -> Path:
     ensure_memory_files()
     safe_category = re.sub(r"[^a-zA-Z0-9_-]+", "_", category.strip()).strip("_") or "general"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if safe_category in LONG_TERM_FILES:
         target = LONG_TERM_FILES[safe_category]
-        with target.open("a", encoding="utf-8") as file:
-            file.write(f"\n## 自动记忆 {timestamp}\n- {note.strip()}\n")
+        _merge_structured_memory(target, safe_category, note, timestamp, slot)
         return target
     append_long_term_memory(note)
     return CLAUDE_MEMORY_FILE
@@ -232,7 +283,7 @@ def get_memory_candidate(name: str) -> Path | None:
     return target if target.exists() and target.is_file() else None
 
 
-def accept_memory_candidate(name: str, category: str = "general") -> Path:
+def accept_memory_candidate(name: str, category: str = "general", slot: str | None = None) -> Path:
     candidate = get_memory_candidate(name)
     if candidate is None:
         raise FileNotFoundError(name)
@@ -241,7 +292,7 @@ def accept_memory_candidate(name: str, category: str = "general") -> Path:
     body = content.split("\n\n", maxsplit=2)[-1].strip() if content else ""
     safe_category = re.sub(r"[^a-zA-Z0-9_-]+", "_", category.strip()).strip("_") or "general"
 
-    target = append_structured_long_term_memory(body, safe_category)
+    target = append_structured_long_term_memory(body, safe_category, slot)
 
     candidate.unlink()
     return target

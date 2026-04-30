@@ -240,7 +240,7 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
             memory_intent = detect_memory_intent(incoming.text)
             if memory_intent is not None:
                 if should_auto_accept_memory_intent(memory_intent):
-                    target = append_structured_long_term_memory(memory_intent.content, memory_intent.category)
+                    target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
                     await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name))
                 else:
                     candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)

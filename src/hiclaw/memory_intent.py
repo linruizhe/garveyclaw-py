@@ -10,6 +10,7 @@ class MemoryIntent:
     content: str
     confidence: str
     reason: str
+    slot: str | None = None
 
 
 AUTO_ACCEPT_CATEGORIES = {"profile", "preferences", "rules"}
@@ -26,7 +27,18 @@ EXPLICIT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"^(?:你以后叫|以后你叫|下次你叫)[：:，,\s]*(?P<content>.+)$"), "rules", "assistant_name_rule"),
     (re.compile(r"^(?:以后都用|以后用|下次用)[：:，,\s]*(?P<content>.+)$"), "preferences", "language_preference"),
     (re.compile(r"^(?:我喜欢你用|我希望你用|我更喜欢你用)[：:，,\s]*(?P<content>.+)$"), "preferences", "preference_statement"),
+    (re.compile(r"^(?:这个项目后续|这个项目后面|这个项目接下来|这个仓库后续|这个仓库后面|这个仓库接下来)[：:，,\s]*(?P<content>.+)$"), "projects", "project_plan"),
+    (re.compile(r"^(?:后续优先|后面优先|接下来优先|后续重点|后面重点|接下来重点)[：:，,\s]*(?P<content>.+)$"), "projects", "project_priority"),
 )
+
+REASON_TO_SLOT = {
+    "addressing_rule": "addressing_user",
+    "assistant_name_rule": "assistant_name",
+    "language_preference": "language",
+    "preference_statement": "style",
+    "response_rule": "reply_rule",
+    "future_rule": "reply_rule",
+}
 
 PROFILE_HINTS = ("我叫", "我是", "我是做", "我的名字", "你可以叫我")
 PREFERENCE_HINTS = ("我喜欢", "我不喜欢", "我习惯", "我偏好", "我通常", "我更喜欢")
@@ -62,7 +74,13 @@ def detect_memory_intent(text: str) -> MemoryIntent | None:
         if not content:
             return None
         category = _classify_category(content, default_category)
-        return MemoryIntent(category=category, content=content, confidence="high", reason=reason)
+        return MemoryIntent(
+            category=category,
+            content=content,
+            confidence="high",
+            reason=reason,
+            slot=REASON_TO_SLOT.get(reason),
+        )
 
     return None
 

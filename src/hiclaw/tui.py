@@ -392,7 +392,7 @@ async def run_tui() -> None:
         memory_intent = detect_memory_intent(prompt)
         if memory_intent is not None:
             if should_auto_accept_memory_intent(memory_intent):
-                target = append_structured_long_term_memory(memory_intent.content, memory_intent.category)
+                target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
                 print_turn_block(
                     "Memory",
                     build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name),

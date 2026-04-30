@@ -478,6 +478,26 @@ workspace/
 
 当前默认策略是：整个 `workspace/` 和 `workspace_course/` 都视为本地运行目录，不提交到 GitHub。
 
+## 记忆系统
+
+当前记忆系统分成四层：
+
+- `long_term/`：正式长期记忆，主要用于用户画像、偏好、项目背景、长期规则。
+- `working_state_*.json`：按入口隔离的工作记忆，用于记录当前目标、最近决策、待确认问题和涉及文件。
+- `session_summaries/`：按入口隔离的会话摘要，用于压缩最近几轮上下文。
+- `candidates/`：候选记忆区，用于先暂存需要人工治理的记忆项。
+
+当前默认策略：
+
+- 高置信度且低风险的自然语言记忆意图（如 `profile / preferences / rules`）会自动写入正式长期记忆。
+- 风险更高或更宽泛的内容（如 `projects / general`）会先进候选区。
+- `/memory_candidates`、`/memory_accept`、`/memory_reject` 主要用于维护者治理，不是普通用户主交互。
+
+当前最小冲突策略：
+
+- 结构化长期记忆会先做简单去重，避免同一条内容重复追加。
+- 对 `profile / preferences / rules` 中少量明显的互斥槽位（如称呼、语言、回答风格）会做覆盖式更新，而不是无限叠加。
+
 ## Skill 能力
 
 当前项目内置一个表格分析 Skill：
