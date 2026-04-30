@@ -23,7 +23,7 @@ from hiclaw.config import (
     SHOW_TOOL_TRACE,
     WORKSPACE_DIR,
 )
-from hiclaw.memory_store import append_conversation_record, load_long_term_memory
+from hiclaw.memory_store import append_conversation_record, build_context_snapshot
 from hiclaw.session_store import load_session_id, save_session_id
 from hiclaw.skill_store import build_skill_prompt
 
@@ -40,19 +40,19 @@ class ClaudeServiceError(Exception):
     """统一表示模型调用失败。"""
 
 
-def build_system_prompt(prompt: str) -> str:
+def build_system_prompt(prompt: str, session_scope: str | None = None) -> str:
     """构造当前 Agent 调用使用的 system prompt。"""
 
-    long_term_memory = load_long_term_memory()
+    context_snapshot = build_context_snapshot(session_scope)
     selected_skills, skill_prompt = build_skill_prompt(prompt)
     selected_skill_names = ", ".join(skill.name for skill in selected_skills) or "无"
 
     return f"""
-你现在运行在一个 Telegram 机器人中。
+你现在运行在一个多入口个人智能体系统中。
 当前工作区目录是：{WORKSPACE_DIR}
 
-下面是从 CLAUDE.md 读取到的长期记忆：
-{long_term_memory}
+下面是当前可用的分层上下文快照：
+{context_snapshot}
 
 本轮命中的 skill：{selected_skill_names}
 
@@ -157,7 +157,7 @@ async def run_agent(
         },
         cwd=str(WORKSPACE_DIR),
         tools=CLAUDE_TOOLS_PRESET,
-        system_prompt=build_system_prompt(prompt),
+        system_prompt=build_system_prompt(prompt, session_scope),
         mcp_servers={"hiclaw": tool_server},
         allowed_tools=ALLOWED_TOOLS,
         hooks=build_tool_hooks(bot, chat_id) if SHOW_TOOL_TRACE else {},
@@ -179,7 +179,7 @@ async def run_agent(
                     },
                     cwd=str(WORKSPACE_DIR),
                     tools=CLAUDE_TOOLS_PRESET,
-                    system_prompt=build_system_prompt(prompt),
+                    system_prompt=build_system_prompt(prompt, session_scope),
                     mcp_servers={"hiclaw": tool_server},
                     allowed_tools=ALLOWED_TOOLS,
                     hooks=build_tool_hooks(bot, chat_id) if SHOW_TOOL_TRACE else {},
@@ -197,5 +197,5 @@ async def run_agent(
     if latest_session_id:
         save_session_id(latest_session_id, session_scope)
 
-    append_conversation_record(record_text or prompt, response, latest_session_id if continue_session else None)
+    append_conversation_record(record_text or prompt, response, latest_session_id if continue_session else None, session_scope)
     return response

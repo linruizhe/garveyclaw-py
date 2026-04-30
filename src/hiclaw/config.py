@@ -30,6 +30,13 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 CLAUDE_MEMORY_FILE = MEMORY_DIR / "CLAUDE.md"
 CONVERSATIONS_DIR = MEMORY_DIR / "conversations"
 CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
+LONG_TERM_MEMORY_DIR = MEMORY_DIR / "long_term"
+LONG_TERM_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+MEMORY_CANDIDATES_DIR = MEMORY_DIR / "candidates"
+MEMORY_CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
+WORKING_STATE_FILE = MEMORY_DIR / "working_state.json"
+SESSION_SUMMARIES_DIR = MEMORY_DIR / "session_summaries"
+SESSION_SUMMARIES_DIR.mkdir(parents=True, exist_ok=True)
 
 SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30"))
 SHOW_TOOL_TRACE = os.getenv("SHOW_TOOL_TRACE", "0") == "1"

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from telegram import Update
 
 logger = logging.getLogger(__name__)
+TELEGRAM_SESSION_SCOPE = "telegram"
 
 
 class AgentServiceError(Exception):
@@ -38,6 +39,7 @@ async def ask_agent(
         continue_session=True,
         record_text=record_text,
         uploaded_image=uploaded_image,
+        session_scope=TELEGRAM_SESSION_SCOPE,
     )
 
 

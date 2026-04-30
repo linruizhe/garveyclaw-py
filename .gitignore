@@ -20,12 +20,8 @@ wheels/
 
 # Runtime data and private local state
 data/
-workspace/memory/CLAUDE.md
-workspace/memory/conversations/
-workspace/uploads/
-workspace/outputs/
-workspace_course/memory_course/CLAUDE.md
-workspace_course/memory_course/conversations/
+workspace/
+workspace_course/
 
 # Local models can be large and machine-specific
 models/

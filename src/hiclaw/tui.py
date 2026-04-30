@@ -11,7 +11,9 @@ from pathlib import Path
 
 from hiclaw.agent_client import AgentServiceError, run_agent
 from hiclaw.agent_response import AgentReply
-from hiclaw.config import AGENT_PROVIDER, PROJECT_ROOT, TUI_OUTPUT_DIR, WORKSPACE_DIR
+from hiclaw.config import AGENT_PROVIDER, PROJECT_ROOT, SHOW_TOOL_TRACE, TUI_OUTPUT_DIR, WORKSPACE_DIR
+from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
+from hiclaw.memory_store import append_memory_candidate, append_structured_long_term_memory
 from hiclaw.session_store import clear_session_id, get_session_file
 
 TUI_SESSION_SCOPE = "tui"
@@ -387,6 +389,25 @@ async def run_tui() -> None:
             prompt = await asyncio.to_thread(read_multiline)
             if not prompt:
                 continue
+        memory_intent = detect_memory_intent(prompt)
+        if memory_intent is not None:
+            if should_auto_accept_memory_intent(memory_intent):
+                target = append_structured_long_term_memory(memory_intent.content, memory_intent.category)
+                print_turn_block(
+                    "Memory",
+                    build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name),
+                    subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Structured memory"),
+                    accent="32",
+                )
+            else:
+                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                print_turn_block(
+                    "Memory",
+                    build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name),
+                    subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Candidate memory"),
+                    accent="33",
+                )
+            continue
         try:
             await submit_prompt(prompt, bot)
         except AgentServiceError as exc:

@@ -23,8 +23,11 @@ from hiclaw.config import (
     FEISHU_APP_SECRET,
     FEISHU_REPLY_PROCESSING_MESSAGE,
     FEISHU_SESSION_SCOPE_PREFIX,
+    SHOW_TOOL_TRACE,
 )
 from hiclaw.media_store import PhotoPayload
+from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
+from hiclaw.memory_store import append_memory_candidate, append_structured_long_term_memory
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +237,15 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
             )
             record_text = f"[Feishu] 用户上传了一张图片。说明：{caption}"
         else:
+            memory_intent = detect_memory_intent(incoming.text)
+            if memory_intent is not None:
+                if should_auto_accept_memory_intent(memory_intent):
+                    target = append_structured_long_term_memory(memory_intent.content, memory_intent.category)
+                    await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name))
+                else:
+                    candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                    await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
+                return
             prompt = incoming.text
             record_text = f"[Feishu] {incoming.text}"
             photo_payload = None

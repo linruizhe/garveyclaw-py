@@ -16,7 +16,7 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 - 自定义 MCP 工具，例如获取时间、读取工作区文件、向当前会话发送消息。
 - 渠道级访问控制，例如 Telegram Owner 校验与飞书白名单。
 - 连续会话，通过本地 `session_id` 维持上下文。
-- 长期记忆，使用 `CLAUDE.md` 和按天归档的对话记录。
+- 分层记忆能力，包含长期记忆、工作记忆、会话摘要和对话归档。
 - 定时任务，支持一次性、每天、每周任务。
 - 自然语言创建定时提醒，例如“30秒后提醒我喝水”。
 - Skill 能力，目前包含表格数据分析与校验 Skill。
@@ -35,7 +35,7 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 - `OpenAI Provider`：`openai_client.py` 负责普通文本、图片理解，以及图片生成/编辑接口调用。
 - `Media Pipeline`：`media_store.py` 处理图片和语音上传；`speech_client.py` 通过 `ffmpeg` + Vosk 做本地语音转文字。
 - `Tools`：`agent_tools.py` 提供自定义 MCP tools，同时白名单允许 Claude Code 内置工具，例如 `Read`、`Edit`、`WebSearch`、`WebFetch`、`Bash`。
-- `State and Knowledge`：`config.py`、`session_store.py`、`memory_store.py` 负责 .env 配置、按通道 session、长期记忆、对话归档和本地运行目录。
+- `State and Knowledge`：`config.py`、`session_store.py`、`memory_store.py` 负责 .env 配置、按通道 session、分层记忆、候选记忆治理、对话归档和本地运行目录。
 - `Skills`：`skill_store.py` 负责本地 Skill prompt 的选择和注入。
 - `Scheduler`：`scheduler.py`、`scheduler_store.py` 负责自然语言定时任务解析、SQLite 持久化、轮询到期任务，并回到 Agent Core 执行。
 
@@ -324,14 +324,21 @@ python -m hiclaw.feishu_bot
 
 飞书通道会按会话隔离连续上下文：私聊使用 `feishu:p2p:{open_id}`，群聊使用 `feishu:chat:{chat_id}`，不会覆盖其他入口的会话。正式使用时建议配置 `FEISHU_ALLOWED_OPEN_IDS` 或 `FEISHU_ALLOWED_CHAT_IDS`，避免组织内其他用户误触发机器人。
 
+当前各入口对应的默认 scope 说明：
+
+- Telegram：`telegram`
+- TUI：`tui`
+- 飞书私聊：`feishu:p2p:{open_id}`
+- 飞书群聊：`feishu:chat:{chat_id}`
+
 ## 交互入口示例
 
 基础命令：
 
 - `/start`：查看机器人简介。
 - `/reset`：清空当前连续会话。
-- `/memory`：查看长期记忆。
-- `/remember 内容`：追加一条长期记忆。
+- `/memory`：查看兼容长期记忆文件。
+- `/remember 内容`：手动写入一条候选记忆。
 - `/skills`：查看可用 Skills。
 - `/tasks`：查看待执行定时任务。
 - `/cancel 任务ID`：取消定时任务。
@@ -350,6 +357,13 @@ python -m hiclaw.feishu_bot
 
 - 发送图片时，机器人会把图片内容以内存 bytes 交给 Agent 处理，不依赖本地图片路径。
 - 发送语音时，如果开启 ASR，机器人会先转写语音，再把转写文本交给 Agent 处理。
+
+记忆行为：
+
+- 对于“你要记得……”“以后都用中文回答”“你可以叫我 Boss”这类高置信度自然语言记忆意图，系统会自动识别。
+- `profile / preferences / rules` 这类低风险长期记忆会直接写入结构化长期记忆。
+- `projects / general` 这类风险更高或语义更宽的内容，会先进入候选记忆区，避免直接污染正式长期记忆。
+- `/memory_candidates`、`/memory_accept`、`/memory_reject` 主要面向维护者做记忆治理，不是普通用户主交互。
 
 ## 项目结构
 
@@ -391,6 +405,11 @@ hiclaw-py/
 └─ workspace/
 ```
 
+说明：
+
+- `workspace/`：本地运行工作区，保存运行过程中产生的上传、输出、记忆、摘要、候选记忆和归档数据，默认不纳入版本控制。
+- `workspace_course/`：课程版本地运行目录，同样默认不纳入版本控制。
+
 核心模块说明：
 
 - `app.py`：统一程序入口，负责根据当前配置启动已启用的消息入口。
@@ -405,7 +424,7 @@ hiclaw-py/
 - `agent_tools.py`：自定义 MCP 工具。
 - `media_store.py`：处理图片和语音上传数据。
 - `speech_client.py`：语音识别抽象层，目前支持 Vosk。
-- `memory_store.py`：长期记忆和对话记录。
+- `memory_store.py`：分层记忆、工作记忆、会话摘要、候选记忆和对话记录。
 - `session_store.py`：连续会话 `session_id` 读写。
 - `scheduler.py`：定时任务解析、创建、执行和管理。
 - `scheduler_store.py`：定时任务 SQLite 表初始化和读写。
@@ -419,7 +438,7 @@ hiclaw-py/
 
 ```text
 data/
-├─ hiclaw_session.json
+├─ hiclaw_session_telegram.json
 ├─ hiclaw_session_tui.json
 ├─ hiclaw_session_feishu_*.json
 └─ hiclaw_tasks.db
@@ -427,6 +446,12 @@ data/
 workspace/
 ├─ memory/
 │  ├─ CLAUDE.md
+│  ├─ working_state_telegram.json
+│  ├─ working_state_tui.json
+│  ├─ working_state_feishu_*.json
+│  ├─ session_summaries/
+│  ├─ long_term/
+│  ├─ candidates/
 │  └─ conversations/
 ├─ outputs/
 │  └─ tui/
@@ -436,16 +461,22 @@ workspace/
 
 说明：
 
-- `data/hiclaw_session.json`：保存连续会话 ID。
+- `data/hiclaw_session_telegram.json`：保存 Telegram 入口连续会话 ID。
 - `data/hiclaw_session_tui.json` / `data/hiclaw_session_feishu_*.json`：保存 TUI / 飞书通道独立会话。
 - `data/hiclaw_tasks.db`：保存定时任务。
-- `workspace/memory/CLAUDE.md`：长期记忆文件。
+- `workspace/memory/CLAUDE.md`：兼容长期记忆文件和默认背景说明。
+- `workspace/memory/working_state_*.json`：按入口隔离维护工作记忆。
+- `workspace/memory/session_summaries/`：按入口隔离维护会话摘要。
+- `workspace/memory/long_term/`：结构化长期记忆分区。
+- `workspace/memory/candidates/`：候选记忆暂存区。
 - `workspace/memory/conversations/`：按天保存对话记录。
 - `workspace/outputs/tui/`：TUI 通道保存生成图片输出。
 - `workspace/uploads/voices/`：保存语音上传文件。
 - 图片默认走内存处理，不再写入 `workspace/uploads/images/`。
 
 这些目录可能包含隐私信息，部署和备份时要单独处理。
+
+当前默认策略是：整个 `workspace/` 和 `workspace_course/` 都视为本地运行目录，不提交到 GitHub。
 
 ## Skill 能力
 
@@ -498,8 +529,8 @@ SCHEDULER_INTERVAL_SECONDS=30
 
 - 不要提交 `.env`。
 - 不要提交 `data/` 中的数据库和 session 文件。
-- 不要提交 `workspace/memory/` 中的记忆和对话记录。
-- 不要提交 `workspace/uploads/` 中的图片和语音。
+- 不要提交整个 `workspace/`。
+- 不要提交整个 `workspace_course/`。
 - 如果启用 Telegram，建议只给自己的 Telegram 用户 ID 配置 `OWNER_ID`。
 - 如果开放给多人使用，需要重新设计权限、配额、审计和数据隔离。
 

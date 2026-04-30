@@ -25,9 +25,18 @@ from hiclaw.config import (
     TELEGRAM_POOL_TIMEOUT,
     TELEGRAM_READ_TIMEOUT,
     TELEGRAM_WRITE_TIMEOUT,
+    SHOW_TOOL_TRACE,
 )
 from hiclaw.media_store import load_photo_message, save_voice_message
-from hiclaw.memory_store import append_long_term_memory, load_long_term_memory
+from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
+from hiclaw.memory_store import (
+    accept_memory_candidate,
+    append_memory_candidate,
+    append_structured_long_term_memory,
+    list_memory_candidates,
+    load_long_term_memory,
+    reject_memory_candidate,
+)
 from hiclaw.scheduler import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -43,6 +52,7 @@ from hiclaw.speech_client import SpeechRecognitionError, transcribe_voice
 from hiclaw.telegram_formatting import format_telegram_text
 
 logger = logging.getLogger(__name__)
+TELEGRAM_SESSION_SCOPE = "telegram"
 
 
 async def reply_plain_text(update: Update, text: str) -> None:
@@ -120,6 +130,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"- 执行时间：{local_time}\n"
                 f"- 内容：{natural_schedule.prompt}",
             )
+            return
+
+        memory_intent = detect_memory_intent(update.message.text)
+        if memory_intent is not None:
+            if should_auto_accept_memory_intent(memory_intent):
+                target = append_structured_long_term_memory(memory_intent.content, memory_intent.category)
+                await reply_plain_text(update, build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name))
+            else:
+                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                await reply_plain_text(update, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
             return
 
         response = await ask_agent(update.message.text, update)
@@ -223,7 +243,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "你好，我是你的机器人。\n\n"
         "我可以回答问题、处理文字、图片和语音消息，使用 Claude 内置工具，操作工作区，并继续之前保存的会话。\n"
         "还支持定时任务，例如“30秒后提醒我喝水”“每天下午3点提醒我站起来活动一下”。\n"
-        "可以使用 /memory 查看长期记忆，使用 /remember 追加长期记忆，使用 /reset 清空当前会话。\n"
+        "可以使用 /memory 查看长期记忆，使用 /reset 清空当前会话。\n"
         "使用 /skills 查看当前可用的 skills。\n"
         "使用 /schedule_in、/tasks、/cancel 管理定时任务。"
     )
@@ -237,7 +257,7 @@ async def reset_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_owner(update):
         return
 
-    clear_session_id()
+    clear_session_id(TELEGRAM_SESSION_SCOPE)
     await update.message.reply_text("当前会话已清空，下一条消息会开启新会话。")
 
 
@@ -253,7 +273,7 @@ async def show_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def remember(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """把用户指定内容追加到长期记忆。"""
+    """把用户指定内容写入候选记忆区，避免直接污染正式长期记忆。"""
 
     if not update.message:
         return
@@ -265,8 +285,72 @@ async def remember(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await reply_plain_text(update, "用法：/remember 这里填写要写入长期记忆的内容")
         return
 
-    append_long_term_memory(memory_note)
-    await reply_plain_text(update, "长期记忆已更新。")
+    candidate_file = append_memory_candidate(memory_note)
+    await reply_plain_text(update, f"已写入候选记忆区，等待后续确认：\n- {candidate_file.name}")
+
+
+async def show_memory_candidates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """查看当前候选记忆列表。"""
+
+    if not update.message:
+        return
+    if not is_owner(update):
+        return
+
+    candidates = list_memory_candidates()
+    if not candidates:
+        await reply_plain_text(update, "当前没有候选记忆。")
+        return
+
+    lines = ["当前候选记忆："]
+    for path in candidates:
+        lines.append(f"- {path.name}")
+    await reply_plain_text(update, "\n".join(lines))
+
+
+async def accept_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """接受一条候选记忆，并合并到正式长期记忆或结构化类别。"""
+
+    if not update.message:
+        return
+    if not is_owner(update):
+        return
+
+    if not context.args:
+        await reply_plain_text(update, "用法：/memory_accept 文件名 [profile|preferences|projects|rules|general]")
+        return
+
+    name = context.args[0].strip()
+    category = context.args[1].strip().lower() if len(context.args) > 1 else "general"
+    try:
+        target = accept_memory_candidate(name, category)
+    except FileNotFoundError:
+        await reply_plain_text(update, f"没有找到候选记忆：{name}")
+        return
+
+    await reply_plain_text(update, f"已采纳候选记忆：\n- {name}\n- 目标：{target.name}")
+
+
+async def reject_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """拒绝并删除一条候选记忆。"""
+
+    if not update.message:
+        return
+    if not is_owner(update):
+        return
+
+    if not context.args:
+        await reply_plain_text(update, "用法：/memory_reject 文件名")
+        return
+
+    name = context.args[0].strip()
+    try:
+        reject_memory_candidate(name)
+    except FileNotFoundError:
+        await reply_plain_text(update, f"没有找到候选记忆：{name}")
+        return
+
+    await reply_plain_text(update, f"已拒绝并删除候选记忆：\n- {name}")
 
 
 async def show_skills(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -426,6 +510,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("memory", show_memory))
     app.add_handler(CommandHandler("remember", remember))
+    app.add_handler(CommandHandler("memory_candidates", show_memory_candidates))
+    app.add_handler(CommandHandler("memory_accept", accept_memory))
+    app.add_handler(CommandHandler("memory_reject", reject_memory))
     app.add_handler(CommandHandler("skills", show_skills))
     app.add_handler(CommandHandler("reset", reset_session))
     app.add_handler(CommandHandler("schedule_in", schedule_in))
