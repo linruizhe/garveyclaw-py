@@ -4,14 +4,12 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 
 这个项目适合两类用途：
 
-- 作为个人长期运行的 Telegram AI Agent。
+- 作为个人长期运行的多通道 AI Agent。
 - 作为学习 Claude Agent SDK、OpenAI Provider、MCP 工具、自定义 Agent 能力的工程样板。
 
 ## 功能特性
 
-- Telegram 文本、图片、语音消息处理。
-- PowerShell TUI 本地交互通道。
-- 飞书机器人长连接文本消息通道。
+- Telegram / PowerShell TUI / 飞书多通道消息接入。
 - Claude Agent SDK + OpenAI 双 Provider 模型调用。
 - Claude Code 内置工具显性化，例如 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebSearch`、`WebFetch`、`Bash`。
 - OpenAI Provider 支持普通文本、图片理解、图片生成与图片编辑。
@@ -256,7 +254,7 @@ hiclaw
 Starting channels: Telegram
 ```
 
-如果同时配置了飞书，会显示类似：
+如果同时配置了多条入口，会显示类似：
 
 ```text
 Starting channels: Telegram, Feishu
