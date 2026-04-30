@@ -1,6 +1,6 @@
 # HiClaw Py
 
-HiClaw Py 是一个基于 Telegram Bot、多通道输入和双 Provider 路由的个人智能体项目。它把 Telegram、PowerShell TUI、飞书作为交互入口，把 `agent_client.py` 作为统一路由层，在 Claude Agent SDK / Claude Code 能力和 OpenAI Provider 之间分发请求，并逐步接入工具、记忆、定时任务、图片理解、图片生成/编辑、语音转文字和 Skill 能力。
+HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体项目，统一接入 Telegram、PowerShell TUI、飞书等入口，并支持 Claude Agent SDK / Claude Code 与 OpenAI Provider。
 
 这个项目适合两类用途：
 
