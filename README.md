@@ -13,14 +13,14 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 - Claude Agent SDK + OpenAI 双 Provider 模型调用。
 - Claude Code 内置工具显性化，例如 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebSearch`、`WebFetch`、`Bash`。
 - OpenAI Provider 支持普通文本、图片理解、图片生成与图片编辑。
-- 自定义 MCP 工具，例如获取时间、读取工作区文件、发送 Telegram 消息。
-- Owner 权限控制，只处理指定 Telegram 用户的消息。
+- 自定义 MCP 工具，例如获取时间、读取工作区文件、向当前会话发送消息。
+- 渠道级访问控制，例如 Telegram Owner 校验与飞书白名单。
 - 连续会话，通过本地 `session_id` 维持上下文。
 - 长期记忆，使用 `CLAUDE.md` 和按天归档的对话记录。
 - 定时任务，支持一次性、每天、每周任务。
 - 自然语言创建定时提醒，例如“30秒后提醒我喝水”。
 - Skill 能力，目前包含表格数据分析与校验 Skill。
-- 可选本地 ASR，使用 `ffmpeg` + Vosk 处理 Telegram 语音消息。
+- 可选本地 ASR，使用 `ffmpeg` + Vosk 处理语音消息。
 
 ## 项目架构
 
@@ -29,7 +29,7 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 整体架构可以分成几条清晰的链路：
 
 - `Channels`：`telegram_bot.py`、`tui.py`、`feishu_bot.py` 分别提供 Telegram、PowerShell TUI 和飞书三条交互入口。
-- `Boot Layer`：`app.py` 是统一启动入口，负责在主线程启动 Telegram 轮询，并在后台线程启动飞书 WebSocket 长连接。
+- `Boot Layer`：`app.py` 是统一启动入口，负责根据配置组合启动已启用的消息入口。
 - `Agent Core`：`agent_client.py` 是统一路由层，根据 `AGENT_PROVIDER` 把请求分发到 Claude 或 OpenAI Provider。
 - `Claude Provider`：`claude_client.py` 负责 session、memory、skills、MCP tools、Claude Code 内置工具和 Claude Agent SDK 查询流。
 - `OpenAI Provider`：`openai_client.py` 负责普通文本、图片理解，以及图片生成/编辑接口调用。
@@ -264,7 +264,7 @@ Starting channels: Telegram, Feishu
 
 ## PowerShell TUI 通道
 
-除了 Telegram Bot，也可以直接在 PowerShell 里启动本地 TUI 通道与同一个 Agent 交互：
+也可以直接在 PowerShell 里启动本地 TUI 通道，与同一个 Agent 交互：
 
 ```powershell
 python -m hiclaw.tui
@@ -276,7 +276,7 @@ python -m hiclaw.tui
 hiclaw-tui
 ```
 
-TUI 复用 `AGENT_PROVIDER`、`WORKSPACE_DIR`、memory、skills 和 Agent 工具链；TUI 使用独立会话文件 `data/hiclaw_session_tui.json`，不会覆盖 Telegram 的连续会话。当前采用稳定的串行交互模式：单行输入按 `Enter` 直接发送，多行内容建议使用 `/paste`。常用命令：
+TUI 复用 `AGENT_PROVIDER`、`WORKSPACE_DIR`、memory、skills 和 Agent 工具链；TUI 使用独立会话文件 `data/hiclaw_session_tui.json`，不会覆盖其他入口的连续会话。当前采用稳定的串行交互模式：单行输入按 `Enter` 直接发送，多行内容建议使用 `/paste`。常用命令：
 
 - `/help`：查看命令。
 - `/reset`：清空 TUI 独立连续会话。
@@ -288,7 +288,7 @@ TUI 复用 `AGENT_PROVIDER`、`WORKSPACE_DIR`、memory、skills 和 Agent 工具
 
 ## 飞书机器人通道
 
-飞书通道使用官方 `lark-oapi` SDK 的长连接模式接收事件，不需要本地暴露公网 Webhook 地址。当前支持文本消息和图片输入理解；图片结果回传仍有限制，复杂图片输出建议优先在 Telegram 或 TUI 通道查看。
+飞书通道使用官方 `lark-oapi` SDK 的长连接模式接收事件，不需要本地暴露公网 Webhook 地址。当前支持文本消息和图片输入理解；图片结果回传仍有限制，复杂图片输出建议优先在其他可见图片结果的入口查看。
 
 启动前需要在飞书开放平台完成这些配置：
 
@@ -322,7 +322,7 @@ hiclaw-feishu
 python -m hiclaw.feishu_bot
 ```
 
-飞书通道会按会话隔离连续上下文：私聊使用 `feishu:p2p:{open_id}`，群聊使用 `feishu:chat:{chat_id}`，不会覆盖 Telegram 或 TUI 的会话。正式使用时建议配置 `FEISHU_ALLOWED_OPEN_IDS` 或 `FEISHU_ALLOWED_CHAT_IDS`，避免组织内其他用户误触发机器人。
+飞书通道会按会话隔离连续上下文：私聊使用 `feishu:p2p:{open_id}`，群聊使用 `feishu:chat:{chat_id}`，不会覆盖其他入口的会话。正式使用时建议配置 `FEISHU_ALLOWED_OPEN_IDS` 或 `FEISHU_ALLOWED_CHAT_IDS`，避免组织内其他用户误触发机器人。
 
 ## 交互入口示例
 
@@ -393,12 +393,12 @@ hiclaw-py/
 
 核心模块说明：
 
-- `app.py`：统一程序入口，负责启动 Telegram 轮询，并在配置存在时启动飞书长连接。
+- `app.py`：统一程序入口，负责根据当前配置启动已启用的消息入口。
 - `config.py`：读取 `.env` 并提供全局配置。
 - `access.py`：Owner 权限判断。
-- `telegram_bot.py`：Telegram 命令、文本、图片、语音和异常处理。
-- `feishu_bot.py`：飞书消息接入、白名单校验、图片下载和回复。
-- `tui.py`：本地 PowerShell TUI 交互通道。
+- `telegram_bot.py`：Telegram 入口的命令、文本、图片、语音和异常处理。
+- `feishu_bot.py`：飞书入口的消息接入、白名单校验、图片下载和回复。
+- `tui.py`：本地 PowerShell TUI 入口。
 - `agent_client.py`：统一 Agent 路由层，根据 `AGENT_PROVIDER` 分发到 Claude 或 OpenAI Provider。
 - `claude_client.py`：封装 Claude Agent SDK、工具配置、会话恢复、记忆和 Skill 注入。
 - `openai_client.py`：封装 OpenAI 文本、图片理解、图片生成/编辑能力。
@@ -442,7 +442,7 @@ workspace/
 - `workspace/memory/CLAUDE.md`：长期记忆文件。
 - `workspace/memory/conversations/`：按天保存对话记录。
 - `workspace/outputs/tui/`：TUI 通道保存生成图片输出。
-- `workspace/uploads/voices/`：保存 Telegram 语音。
+- `workspace/uploads/voices/`：保存语音上传文件。
 - 图片默认走内存处理，不再写入 `workspace/uploads/images/`。
 
 这些目录可能包含隐私信息，部署和备份时要单独处理。
