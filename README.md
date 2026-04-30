@@ -350,44 +350,56 @@ python -m hiclaw.feishu_bot
 ## 项目结构
 
 ```text
-hiclaw_py/
+hiclaw-py/
 ├─ pyproject.toml
 ├─ .env.example
 ├─ README.md
 ├─ COURSE_GUIDE.md
+├─ assets/
+│  └─ hiclaw_architecture.svg
 ├─ claw_course_bot.py
 ├─ skills/
 │  └─ table_analysis_skill.md
 ├─ src/
 │  └─ hiclaw/
 │     ├─ __main__.py
+│     ├─ __init__.py
 │     ├─ access.py
+│     ├─ agent_client.py
+│     ├─ agent_response.py
 │     ├─ agent_tools.py
 │     ├─ app.py
 │     ├─ claude_client.py
 │     ├─ config.py
+│     ├─ feishu_bot.py
 │     ├─ media_store.py
 │     ├─ memory_store.py
+│     ├─ openai_client.py
 │     ├─ scheduler.py
 │     ├─ scheduler_store.py
 │     ├─ session_store.py
 │     ├─ skill_store.py
 │     ├─ speech_client.py
 │     ├─ telegram_bot.py
-│     └─ telegram_formatting.py
+│     ├─ telegram_formatting.py
+│     └─ tui.py
 ├─ data/
 └─ workspace/
 ```
 
 核心模块说明：
 
-- `app.py`：程序入口，初始化日志并启动 Telegram 轮询。
+- `app.py`：统一程序入口，负责启动 Telegram 轮询，并在配置存在时启动飞书长连接。
 - `config.py`：读取 `.env` 并提供全局配置。
 - `access.py`：Owner 权限判断。
 - `telegram_bot.py`：Telegram 命令、文本、图片、语音和异常处理。
-- `claude_client.py`：封装 Claude Agent SDK 调用、工具配置、会话和记忆注入。
+- `feishu_bot.py`：飞书消息接入、白名单校验、图片下载和回复。
+- `tui.py`：本地 PowerShell TUI 交互通道。
+- `agent_client.py`：统一 Agent 路由层，根据 `AGENT_PROVIDER` 分发到 Claude 或 OpenAI Provider。
+- `claude_client.py`：封装 Claude Agent SDK、工具配置、会话恢复、记忆和 Skill 注入。
+- `openai_client.py`：封装 OpenAI 文本、图片理解、图片生成/编辑能力。
 - `agent_tools.py`：自定义 MCP 工具。
-- `media_store.py`：保存 Telegram 图片和语音文件。
+- `media_store.py`：处理图片和语音上传数据。
 - `speech_client.py`：语音识别抽象层，目前支持 Vosk。
 - `memory_store.py`：长期记忆和对话记录。
 - `session_store.py`：连续会话 `session_id` 读写。
@@ -395,6 +407,7 @@ hiclaw_py/
 - `scheduler_store.py`：定时任务 SQLite 表初始化和读写。
 - `skill_store.py`：Skill 加载和查询。
 - `telegram_formatting.py`：把常见 Markdown 转成 Telegram 可渲染 HTML。
+- `agent_response.py`：统一文本/图片回复结果结构。
 
 ## 运行数据
 
@@ -403,23 +416,28 @@ hiclaw_py/
 ```text
 data/
 ├─ hiclaw_session.json
+├─ hiclaw_session_tui.json
+├─ hiclaw_session_feishu_*.json
 └─ hiclaw_tasks.db
 
 workspace/
 ├─ memory/
 │  ├─ CLAUDE.md
 │  └─ conversations/
+├─ outputs/
+│  └─ tui/
 └─ uploads/
-   ├─ images/
    └─ voices/
 ```
 
 说明：
 
 - `data/hiclaw_session.json`：保存连续会话 ID。
+- `data/hiclaw_session_tui.json` / `data/hiclaw_session_feishu_*.json`：保存 TUI / 飞书通道独立会话。
 - `data/hiclaw_tasks.db`：保存定时任务。
 - `workspace/memory/CLAUDE.md`：长期记忆文件。
 - `workspace/memory/conversations/`：按天保存对话记录。
+- `workspace/outputs/tui/`：TUI 通道保存生成图片输出。
 - `workspace/uploads/voices/`：保存 Telegram 语音。
 - 图片默认走内存处理，不再写入 `workspace/uploads/images/`。
 
