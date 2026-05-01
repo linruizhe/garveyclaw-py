@@ -400,7 +400,7 @@ async def run_tui() -> None:
                     accent="32",
                 )
             else:
-                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
                 print_turn_block(
                     "Memory",
                     build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name),

@@ -10,18 +10,27 @@ from hiclaw.config import (
     CLAUDE_MEMORY_FILE,
     CONVERSATIONS_DIR,
     LONG_TERM_MEMORY_DIR,
+    MEMORY_ARCHIVE_DIR,
+    MEMORY_ARCHIVE_AFTER_DAYS,
     MEMORY_CANDIDATES_DIR,
+    MEMORY_CANDIDATE_AUTO_PROMOTE_SECONDS,
     MEMORY_DIR,
     PROJECT_ROOT,
     SESSION_SUMMARIES_DIR,
     WORKING_STATE_FILE,
     WORKSPACE_DIR,
 )
+from hiclaw.memory_frequency import (
+    calculate_memory_importance,
+    get_high_frequency_topics,
+    load_frequency_state,
+    save_importance_state,
+    update_memory_frequency,
+)
 
 LONG_TERM_FILES = {
     "profile": LONG_TERM_MEMORY_DIR / "profile.md",
     "preferences": LONG_TERM_MEMORY_DIR / "preferences.md",
-    "projects": LONG_TERM_MEMORY_DIR / "projects.md",
     "rules": LONG_TERM_MEMORY_DIR / "rules.md",
 }
 
@@ -38,20 +47,8 @@ FILE_REFERENCE_PATTERN = re.compile(r"(?:src|workspace|data|assets|skills|script
 TASK_INTENT_PATTERN = re.compile(r"(帮我|请你|实现|修改|优化|重构|添加|增加|修复|排查|检查|分析|设计|整理|更新|刷新|生成|创建)")
 QUESTION_INTENT_PATTERN = re.compile(r"(吗|么|什么|为何|为什么|如何|咋|怎么|哪|多少|是否|可不可以|能不能|\?|？)")
 FILE_WORK_INTENT_PATTERN = re.compile(r"(文件|代码|模块|函数|类|路径|README|SVG|架构图|session|记忆|上下文|prompt)")
-MEMORY_SLOT_PATTERNS = {
-    "profile": {
-        "addressing_user": re.compile(r"(叫我|称呼我|Boss)", re.IGNORECASE),
-        "assistant_name": re.compile(r"(叫你|你叫|马里奥)", re.IGNORECASE),
-    },
-    "preferences": {
-        "language": re.compile(r"(中文|英文|用中文|用英文|回答语言|聊天语言)", re.IGNORECASE),
-        "style": re.compile(r"(简洁|详细|精简|展开|直接一点|详细一点)", re.IGNORECASE),
-    },
-    "rules": {
-        "channel_emphasis": re.compile(r"(强调 Telegram|强调飞书|强调 TUI|默认强调)", re.IGNORECASE),
-        "reply_rule": re.compile(r"(回答我时|以后回答|下次回答|回复时)", re.IGNORECASE),
-    },
-}
+SLOT_MARKER_PATTERN = re.compile(r"<!--\s*slot:(?P<slot>[a-zA-Z0-9_-]+)\s*-->")
+KEYWORD_EXTRACTOR = re.compile(r"[\u4e00-\u9fa5]{2,10}|[a-zA-Z]{3,20}")
 
 
 def _sanitize_scope(scope: str | None) -> str:
@@ -100,7 +97,6 @@ def ensure_memory_files() -> None:
     defaults = {
         "profile": "# 用户画像\n\n- 暂无结构化画像。\n",
         "preferences": "# 用户偏好\n\n- 暂无结构化偏好。\n",
-        "projects": "# 项目背景\n\n- 暂无结构化项目背景。\n",
         "rules": "# 长期规则\n\n- 暂无长期规则。\n",
     }
     for key, path in LONG_TERM_FILES.items():
@@ -205,11 +201,33 @@ def _normalize_memory_note(note: str) -> str:
     return note.strip().replace("\n", " ")
 
 
-def _detect_memory_slot(category: str, note: str) -> str | None:
-    category_patterns = MEMORY_SLOT_PATTERNS.get(category, {})
-    for slot, pattern in category_patterns.items():
-        if pattern.search(note):
-            return slot
+def _split_markdown_sections(content: str) -> tuple[list[str], list[list[str]]]:
+    lines = content.splitlines()
+    preamble: list[str] = []
+    sections: list[list[str]] = []
+    current: list[str] | None = None
+
+    for line in lines:
+        if line.startswith("## "):
+            if current is not None:
+                sections.append(current)
+            current = [line]
+            continue
+        if current is None:
+            preamble.append(line)
+        else:
+            current.append(line)
+
+    if current is not None:
+        sections.append(current)
+    return preamble, sections
+
+
+def _section_slot(section_lines: list[str]) -> str | None:
+    for line in section_lines:
+        match = SLOT_MARKER_PATTERN.search(line)
+        if match:
+            return match.group("slot")
     return None
 
 
@@ -219,23 +237,29 @@ def _merge_structured_memory(path: Path, category: str, note: str, timestamp: st
     if normalized_note in existing:
         return False
 
-    lines = existing.splitlines()
-    slot = slot or _detect_memory_slot(category, normalized_note)
-    if slot is not None:
-        pattern = MEMORY_SLOT_PATTERNS[category][slot]
-        filtered: list[str] = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("- ") and pattern.search(stripped):
-                continue
-            filtered.append(line)
-        lines = filtered
+    preamble, sections = _split_markdown_sections(existing)
 
-    if lines and lines[-1].strip() != "":
-        lines.append("")
-    lines.append(f"## 自动记忆 {timestamp}")
-    lines.append(f"- {normalized_note}")
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    filtered_sections: list[list[str]] = []
+    for section in sections:
+        section_slot = _section_slot(section)
+        if slot and section_slot == slot:
+            continue
+        filtered_sections.append(section)
+
+    new_section = [f"## 自动记忆 {timestamp}"]
+    if slot:
+        new_section.append(f"<!-- slot:{slot} -->")
+    new_section.append(f"- {normalized_note}")
+    filtered_sections.append(new_section)
+
+    rebuilt_lines = list(preamble)
+    if rebuilt_lines and rebuilt_lines[-1].strip() != "":
+        rebuilt_lines.append("")
+    for index, section in enumerate(filtered_sections):
+        if rebuilt_lines and rebuilt_lines[-1].strip() != "":
+            rebuilt_lines.append("")
+        rebuilt_lines.extend(section)
+    path.write_text("\n".join(rebuilt_lines).rstrip() + "\n", encoding="utf-8")
     return True
 
 
@@ -263,12 +287,21 @@ def append_structured_long_term_memory(note: str, category: str, slot: str | Non
     return CLAUDE_MEMORY_FILE
 
 
-def append_memory_candidate(note: str, category: str = "general") -> Path:
+def append_memory_candidate(note: str, category: str = "general", reason: str | None = None, slot: str | None = None) -> Path:
     ensure_memory_files()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_category = re.sub(r"[^a-zA-Z0-9_-]+", "_", category.strip()).strip("_") or "general"
     target = MEMORY_CANDIDATES_DIR / f"{timestamp}_{safe_category}.md"
-    target.write_text(f"# Memory Candidate\n\n- category: {safe_category}\n- created_at: {datetime.now().isoformat(timespec='seconds')}\n\n{note.strip()}\n", encoding="utf-8")
+    metadata_lines = [
+        f"- category: {safe_category}",
+        f"- created_at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if reason:
+        metadata_lines.append(f"- reason: {reason}")
+    if slot:
+        metadata_lines.append(f"- slot: {slot}")
+    metadata = "\n".join(metadata_lines)
+    target.write_text(f"# Memory Candidate\n\n{metadata}\n\n{note.strip()}\n", encoding="utf-8")
     return target
 
 
@@ -394,7 +427,6 @@ def build_context_snapshot(scope: str | None = None) -> str:
     for key, title in (
         ("profile", "用户画像"),
         ("preferences", "用户偏好"),
-        ("projects", "项目背景"),
         ("rules", "长期规则"),
     ):
         content = LONG_TERM_FILES[key].read_text(encoding="utf-8").strip()
@@ -421,3 +453,234 @@ def append_conversation_record(user_message: str, assistant_reply: str, session_
         file.write(json.dumps(payload, ensure_ascii=False) + "\n")
     save_session_summary(session_scope, user_message, assistant_reply)
     update_working_state_from_turn(user_message, assistant_reply, session_scope)
+    update_memory_frequency(user_message, assistant_reply)
+
+
+def _parse_candidate_timestamp(filename: str) -> datetime | None:
+    match = re.match(r"^(?P<ts>\d{8}_\d{6})_", filename)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group("ts"), "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+def _parse_candidate_metadata(content: str) -> tuple[str, str | None, str | None]:
+    category_match = re.search(r"category:\s*(\S+)", content)
+    category = category_match.group(1) if category_match else "general"
+    slot_match = re.search(r"slot:\s*(\S+)", content)
+    slot = slot_match.group(1) if slot_match else None
+    reason_match = re.search(r"reason:\s*(\S+)", content)
+    reason = reason_match.group(1) if reason_match else None
+    return category, slot, reason
+
+
+def _get_promote_delay_seconds(reason: str | None) -> int:
+    if reason in {"explicit_remember", "addressing_user", "assistant_name"}:
+        return 0
+    if reason in {"language_preference", "response_style", "preference_statement"}:
+        return 3600
+    if reason in {"future_rule", "response_rule"}:
+        return 21600
+    return MEMORY_CANDIDATE_AUTO_PROMOTE_SECONDS
+
+
+def auto_promote_candidates() -> list[Path]:
+    promoted: list[Path] = []
+    now = datetime.now()
+
+    for candidate_path in list_memory_candidates(limit=100):
+        content = candidate_path.read_text(encoding="utf-8").strip()
+        if not content:
+            candidate_path.unlink()
+            continue
+
+        body = content.split("\n\n", maxsplit=2)[-1].strip() if content else ""
+        if not body:
+            candidate_path.unlink()
+            continue
+
+        category, slot, reason = _parse_candidate_metadata(content)
+        created_at = _parse_candidate_timestamp(candidate_path.name)
+        if created_at is None:
+            continue
+
+        delay_seconds = _get_promote_delay_seconds(reason)
+        age_seconds = (now - created_at).total_seconds()
+        if age_seconds < delay_seconds:
+            continue
+
+        safe_category = re.sub(r"[^a-zA-Z0-9_-]+", "_", category.strip()).strip("_") or "general"
+        target = append_structured_long_term_memory(body, safe_category, slot)
+        candidate_path.unlink()
+        promoted.append(target)
+
+    return promoted
+
+
+def archive_old_memories() -> list[Path]:
+    archived: list[Path] = []
+    now = datetime.now()
+    cutoff_days = MEMORY_ARCHIVE_AFTER_DAYS
+
+    for category, path in LONG_TERM_FILES.items():
+        if not path.exists():
+            continue
+
+        existing = path.read_text(encoding="utf-8")
+        preamble, sections = _split_markdown_sections(existing)
+
+        kept_sections: list[list[str]] = []
+        archived_sections: list[list[str]] = []
+
+        for section in sections:
+            section_date = None
+            for line in section:
+                date_match = re.search(r"自动记忆\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})", line)
+                if date_match:
+                    try:
+                        section_date = datetime.strptime(date_match.group(1), "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        pass
+                    break
+
+            if section_date and (now - section_date).days > cutoff_days:
+                archived_sections.append(section)
+            else:
+                kept_sections.append(section)
+
+        if archived_sections:
+            archive_file = MEMORY_ARCHIVE_DIR / f"{category}_{now.strftime('%Y%m%d')}.md"
+            archive_lines = list(preamble)
+            for section in archived_sections:
+                if archive_lines and archive_lines[-1].strip() != "":
+                    archive_lines.append("")
+                archive_lines.extend(section)
+            archive_file.write_text("\n".join(archive_lines).rstrip() + "\n", encoding="utf-8")
+            archived.append(archive_file)
+
+            rebuilt_lines = list(preamble)
+            for section in kept_sections:
+                if rebuilt_lines and rebuilt_lines[-1].strip() != "":
+                    rebuilt_lines.append("")
+                rebuilt_lines.extend(section)
+            path.write_text("\n".join(rebuilt_lines).rstrip() + "\n", encoding="utf-8")
+
+    return archived
+
+
+def _extract_memory_content(section: list[str]) -> str | None:
+    for line in section:
+        match = re.search(r"^-\s*(.+)$", line.strip())
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _calculate_section_similarity(section_a: list[str], section_b: list[str]) -> float:
+    content_a = _extract_memory_content(section_a)
+    content_b = _extract_memory_content(section_b)
+    if not content_a or not content_b:
+        return 0.0
+
+    keywords_a = set(KEYWORD_EXTRACTOR.findall(content_a.lower()))
+    keywords_b = set(KEYWORD_EXTRACTOR.findall(content_b.lower()))
+
+    if not keywords_a or not keywords_b:
+        return 0.0
+
+    intersection = keywords_a & keywords_b
+    union = keywords_a | keywords_b
+    return len(intersection) / len(union) if union else 0.0
+
+
+def meditate_and_organize_memories() -> dict[str, Any]:
+    frequency_state = load_frequency_state()
+    high_freq_topics = get_high_frequency_topics(threshold=3)
+
+    meditation_report = {
+        "promoted_by_frequency": [],
+        "merged_memories": [],
+        "cleaned_memories": [],
+        "importance_scores": {},
+    }
+
+    for topic, count in high_freq_topics:
+        meditation_report["promoted_by_frequency"].append({
+            "topic": topic,
+            "count": count,
+        })
+
+    for category, path in LONG_TERM_FILES.items():
+        if not path.exists():
+            continue
+
+        existing = path.read_text(encoding="utf-8")
+        preamble, sections = _split_markdown_sections(existing)
+
+        if len(sections) <= 1:
+            continue
+
+        merged_sections: list[list[str]] = []
+        used_indices: set[int] = set()
+
+        for i, section_a in enumerate(sections):
+            if i in used_indices:
+                continue
+
+            similar_sections = [section_a]
+            used_indices.add(i)
+
+            for j, section_b in enumerate(sections):
+                if j in used_indices:
+                    continue
+                similarity = _calculate_section_similarity(section_a, section_b)
+                if similarity > 0.6:
+                    similar_sections.append(section_b)
+                    used_indices.add(j)
+
+            if len(similar_sections) > 1:
+                merged_content = _extract_memory_content(section_a)
+                if merged_content:
+                    merged_section = [
+                        f"## 冥想合并 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        f"- {merged_content} [合并 {len(similar_sections)} 条相似记忆]",
+                    ]
+                    merged_sections.append(merged_section)
+                    meditation_report["merged_memories"].append({
+                        "category": category,
+                        "merged_count": len(similar_sections),
+                        "content_preview": merged_content[:50],
+                    })
+            else:
+                merged_sections.append(section_a)
+
+        kept_sections = []
+        cleaned_count = 0
+        for section in merged_sections:
+            content = _extract_memory_content(section)
+            if content:
+                importance = calculate_memory_importance(content, frequency_state)
+                if importance < 0.5 and len(merged_sections) > 3:
+                    cleaned_count += 1
+                    continue
+                kept_sections.append(section)
+
+        if cleaned_count > 0:
+            meditation_report["cleaned_memories"].append({
+                "category": category,
+                "cleaned_count": cleaned_count,
+            })
+
+        if merged_sections != sections:
+            rebuilt_lines = list(preamble)
+            for section in kept_sections:
+                if rebuilt_lines and rebuilt_lines[-1].strip() != "":
+                    rebuilt_lines.append("")
+                rebuilt_lines.extend(section)
+            path.write_text("\n".join(rebuilt_lines).rstrip() + "\n", encoding="utf-8")
+
+    save_importance_state({"memory_scores": meditation_report["importance_scores"]})
+
+    return meditation_report

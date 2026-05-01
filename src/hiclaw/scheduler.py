@@ -10,6 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from hiclaw.agent_client import run_agent
 from hiclaw.config import SCHEDULER_INTERVAL_SECONDS, TASK_DB_FILE
+from hiclaw.memory_store import archive_old_memories, auto_promote_candidates, meditate_and_organize_memories
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,31 @@ async def check_due_tasks(bot) -> None:
         await execute_scheduled_task(task, bot)
 
 
+async def run_memory_maintenance() -> None:
+    try:
+        promoted = auto_promote_candidates()
+        if promoted:
+            logger.info("Auto-promoted %d memory candidate(s)", len(promoted))
+
+        archived = archive_old_memories()
+        if archived:
+            logger.info("Archived %d old memory file(s)", len(archived))
+    except Exception:
+        logger.exception("Memory maintenance failed")
+
+
+async def run_memory_meditation() -> None:
+    try:
+        report = meditate_and_organize_memories()
+        logger.info(
+            "Memory meditation completed: %d merged, %d cleaned",
+            len(report.get("merged_memories", [])),
+            len(report.get("cleaned_memories", [])),
+        )
+    except Exception:
+        logger.exception("Memory meditation failed")
+
+
 def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
@@ -425,6 +451,21 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
         seconds=SCHEDULER_INTERVAL_SECONDS,
         args=[bot],
         id="hiclaw_check_tasks",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_memory_maintenance,
+        "interval",
+        hours=6,
+        id="hiclaw_memory_maintenance",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_memory_meditation,
+        "cron",
+        hour=2,
+        minute=0,
+        id="hiclaw_memory_meditation",
         replace_existing=True,
     )
     return scheduler

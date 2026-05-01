@@ -138,7 +138,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
                 await reply_plain_text(update, build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name))
             else:
-                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
                 await reply_plain_text(update, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
             return
 
@@ -317,7 +317,7 @@ async def accept_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if not context.args:
-        await reply_plain_text(update, "用法：/memory_accept 文件名 [profile|preferences|projects|rules|general]")
+        await reply_plain_text(update, "用法：/memory_accept 文件名 [profile|preferences|rules|general]")
         return
 
     name = context.args[0].strip()

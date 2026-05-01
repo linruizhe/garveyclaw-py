@@ -243,7 +243,7 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
                     target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
                     await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name))
                 else:
-                    candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category)
+                    candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
                     await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
                 return
             prompt = incoming.text

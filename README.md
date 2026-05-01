@@ -16,7 +16,8 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 - 自定义 MCP 工具，例如获取时间、读取工作区文件、向当前会话发送消息。
 - 渠道级访问控制，例如 Telegram Owner 校验与飞书白名单。
 - 连续会话，通过本地 `session_id` 维持上下文。
-- 分层记忆能力，包含长期记忆、工作记忆、会话摘要和对话归档。
+- 分层记忆能力，包含长期记忆、工作记忆、会话摘要、对话归档和拟人化记忆机制。
+- 拟人化记忆系统：频率加权、智能提升、夜间冥想整理、自动归档。
 - 定时任务，支持一次性、每天、每周任务。
 - 自然语言创建定时提醒，例如“30秒后提醒我喝水”。
 - Skill 能力，目前包含表格数据分析与校验 Skill。
@@ -35,7 +36,7 @@ HiClaw Py 是一个支持多通道交互和双 Provider 路由的个人智能体
 - `OpenAI Provider`：`openai_client.py` 负责普通文本、图片理解，以及图片生成/编辑接口调用。
 - `Media Pipeline`：`media_store.py` 处理图片和语音上传；`speech_client.py` 通过 `ffmpeg` + Vosk 做本地语音转文字。
 - `Tools`：`agent_tools.py` 提供自定义 MCP tools，同时白名单允许 Claude Code 内置工具，例如 `Read`、`Edit`、`WebSearch`、`WebFetch`、`Bash`。
-- `State and Knowledge`：`config.py`、`session_store.py`、`memory_store.py` 负责 .env 配置、按通道 session、分层记忆、候选记忆治理、对话归档和本地运行目录。
+- `State and Knowledge`：`config.py`、`session_store.py`、`memory_store.py`、`memory_intent.py`、`memory_frequency.py` 负责 .env 配置、按通道 session、分层记忆、候选记忆治理、频率加权、冥想整理、对话归档和本地运行目录。
 - `Skills`：`skill_store.py` 负责本地 Skill prompt 的选择和注入。
 - `Scheduler`：`scheduler.py`、`scheduler_store.py` 负责自然语言定时任务解析、SQLite 持久化、轮询到期任务，并回到 Agent Core 执行。
 
@@ -360,9 +361,11 @@ python -m hiclaw.feishu_bot
 
 记忆行为：
 
-- 对于“你要记得……”“以后都用中文回答”“你可以叫我 Boss”这类高置信度自然语言记忆意图，系统会自动识别。
-- `profile / preferences / rules` 这类低风险长期记忆会直接写入结构化长期记忆。
-- `projects / general` 这类风险更高或语义更宽的内容，会先进入候选记忆区，避免直接污染正式长期记忆。
+- 对于"你要记得……""以后都用中文回答""你可以叫我 Boss"这类高置信度自然语言记忆意图，系统会自动识别。
+- `profile / preferences / rules` 这类低风险长期记忆会根据意图类型智能提升（立即/1小时/6小时/24小时）。
+- 反复强调的内容会被频率加权机制捕获，加速提升为长期记忆。
+- 每天凌晨 2:00 系统会"冥想"整理记忆，合并相似条目、清理低价值内容。
+- 超过 30 天的旧记忆自动归档到 `archive/` 目录。
 - `/memory_candidates`、`/memory_accept`、`/memory_reject` 主要面向维护者做记忆治理，不是普通用户主交互。
 
 ## 项目结构
@@ -391,6 +394,8 @@ hiclaw-py/
 │     ├─ config.py
 │     ├─ feishu_bot.py
 │     ├─ media_store.py
+│     ├─ memory_frequency.py
+│     ├─ memory_intent.py
 │     ├─ memory_store.py
 │     ├─ openai_client.py
 │     ├─ scheduler.py
@@ -424,7 +429,7 @@ hiclaw-py/
 - `agent_tools.py`：自定义 MCP 工具。
 - `media_store.py`：处理图片和语音上传数据。
 - `speech_client.py`：语音识别抽象层，目前支持 Vosk。
-- `memory_store.py`：分层记忆、工作记忆、会话摘要、候选记忆和对话记录。
+- `memory_store.py`：分层记忆、工作记忆、会话摘要、候选记忆治理、对话记录、自动提升、冥想整理和归档。
 - `session_store.py`：连续会话 `session_id` 读写。
 - `scheduler.py`：定时任务解析、创建、执行和管理。
 - `scheduler_store.py`：定时任务 SQLite 表初始化和读写。
@@ -446,12 +451,15 @@ data/
 workspace/
 ├─ memory/
 │  ├─ CLAUDE.md
+│  ├─ frequency.json
+│  ├─ importance.json
 │  ├─ working_state_telegram.json
 │  ├─ working_state_tui.json
 │  ├─ working_state_feishu_*.json
 │  ├─ session_summaries/
 │  ├─ long_term/
 │  ├─ candidates/
+│  ├─ archive/
 │  └─ conversations/
 ├─ outputs/
 │  └─ tui/
@@ -465,10 +473,13 @@ workspace/
 - `data/hiclaw_session_tui.json` / `data/hiclaw_session_feishu_*.json`：保存 TUI / 飞书通道独立会话。
 - `data/hiclaw_tasks.db`：保存定时任务。
 - `workspace/memory/CLAUDE.md`：兼容长期记忆文件和默认背景说明。
+- `workspace/memory/frequency.json`：话题频率统计，用于频率加权机制。
+- `workspace/memory/importance.json`：记忆重要性评分记录。
 - `workspace/memory/working_state_*.json`：按入口隔离维护工作记忆。
 - `workspace/memory/session_summaries/`：按入口隔离维护会话摘要。
 - `workspace/memory/long_term/`：结构化长期记忆分区。
 - `workspace/memory/candidates/`：候选记忆暂存区。
+- `workspace/memory/archive/`：过期记忆归档目录。
 - `workspace/memory/conversations/`：按天保存对话记录。
 - `workspace/outputs/tui/`：TUI 通道保存生成图片输出。
 - `workspace/uploads/voices/`：保存语音上传文件。
@@ -480,38 +491,62 @@ workspace/
 
 ## 记忆系统
 
-当前记忆系统分成四层：
+当前记忆系统模拟人类记忆机制，包含频率加权、智能提升、夜间冥想和自动归档：
 
-- `long_term/`：正式长期记忆，主要用于用户画像、偏好、项目背景、长期规则。
-- `working_state_*.json`：按入口隔离的工作记忆，用于记录当前目标、最近决策、待确认问题和涉及文件。
-- `session_summaries/`：按入口隔离的会话摘要，用于压缩最近几轮上下文。
-- `candidates/`：候选记忆区，用于先暂存需要人工治理的记忆项。
+### 记忆分层
 
-当前默认策略：
+- `long_term/`：正式长期记忆，用于用户画像、偏好、长期规则。
+- `working_state_*.json`：按入口隔离的工作记忆，记录当前目标、最近决策、待确认问题和涉及文件。
+- `session_summaries/`：按入口隔离的会话摘要，压缩最近几轮上下文。
+- `candidates/`：候选记忆区，暂存需要观察的记忆项。
+- `archive/`：归档记忆区，保存过期但可能仍有价值的历史记忆。
 
-- 高置信度且低风险的自然语言记忆意图（如 `profile / preferences / rules`）会自动写入正式长期记忆。
-- 风险更高或更宽泛的内容（如 `projects / general`）会先进候选区。
-- `/memory_candidates`、`/memory_accept`、`/memory_reject` 主要用于维护者治理，不是普通用户主交互。
+### 智能记忆提升
 
-记忆冲突与去重（当前最小策略）：
+系统根据意图类型自动决定候选记忆的提升时间：
+
+| 意图类型 | 提升时间 | 示例 |
+|---------|---------|------|
+| 明确记忆 | 立即 | "你要记得我喜欢用 VS Code" |
+| 偏好声明 | 1 小时 | "我喜欢用中文回答" |
+| 未来规则 | 6 小时 | "以后你要简洁回答" |
+| 模糊内容 | 24 小时 | "随便记一下这个" |
+
+### 频率加权机制
+
+- 每次对话自动提取关键词并统计频率。
+- 高频话题（默认 ≥3 次）会被标记为重要，加速记忆提升。
+- 影响记忆重要性评分，强调词（必须/一定/记住）加分，模糊词（可能/也许/暂时）减分。
+
+### 记忆冥想机制
+
+每天凌晨 2:00 自动执行记忆整理：
+
+1. **合并相似记忆**：相似度 >60% 的条目自动合并。
+2. **重要性评分**：根据频率和关键词强度打分。
+3. **清理低价值记忆**：评分过低且记忆过多时自动清理。
+4. **生成整理报告**：记录合并/清理的操作日志。
+
+### 自动归档
+
+- 长期记忆超过 30 天自动归档到 `archive/` 目录。
+- 按分类（profile/preferences/rules）分别归档。
+- 原文件只保留未过期的记忆条目。
+
+### 记忆冲突与去重
 
 - 同一条记忆内容重复出现时会去重，不会重复追加。
 - 对 `profile / preferences / rules` 中部分明确槽位采用覆盖式更新：
   - `profile`：用户称呼、Agent 名称。
   - `preferences`：语言偏好、回答风格。
   - `rules`：渠道强调规则、回答规则。
-- `projects / general` 默认先进候选区，避免直接把模糊项目陈述写死到正式长期记忆。
+- `general` 默认先进候选区，避免直接把模糊陈述写死到正式长期记忆。
 
-维护者命令：
+### 维护者命令
 
 - `/memory_candidates`：查看候选记忆列表。
-- `/memory_accept 文件名 [profile|preferences|projects|rules|general]`：采纳候选记忆。
+- `/memory_accept 文件名 [profile|preferences|rules|general]`：采纳候选记忆。
 - `/memory_reject 文件名`：拒绝并删除候选记忆。
-
-当前最小冲突策略：
-
-- 结构化长期记忆会先做简单去重，避免同一条内容重复追加。
-- 对 `profile / preferences / rules` 中少量明显的互斥槽位（如称呼、语言、回答风格）会做覆盖式更新，而不是无限叠加。
 
 ## Skill 能力
 
@@ -597,6 +632,12 @@ Claude Code 的 `WebSearch`、`WebFetch` 是否可用取决于当前模型服务
 
 ```powershell
 python -m compileall src/hiclaw
+```
+
+记忆系统测试：
+
+```powershell
+python tests/test_memory_system.py
 ```
 
 检查文本编码，避免中文注释或 `.env` 配置说明被 Windows 终端写成问号乱码：
