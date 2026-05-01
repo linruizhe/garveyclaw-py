@@ -493,6 +493,21 @@ workspace/
 - 风险更高或更宽泛的内容（如 `projects / general`）会先进候选区。
 - `/memory_candidates`、`/memory_accept`、`/memory_reject` 主要用于维护者治理，不是普通用户主交互。
 
+记忆冲突与去重（当前最小策略）：
+
+- 同一条记忆内容重复出现时会去重，不会重复追加。
+- 对 `profile / preferences / rules` 中部分明确槽位采用覆盖式更新：
+  - `profile`：用户称呼、Agent 名称。
+  - `preferences`：语言偏好、回答风格。
+  - `rules`：渠道强调规则、回答规则。
+- `projects / general` 默认先进候选区，避免直接把模糊项目陈述写死到正式长期记忆。
+
+维护者命令：
+
+- `/memory_candidates`：查看候选记忆列表。
+- `/memory_accept 文件名 [profile|preferences|projects|rules|general]`：采纳候选记忆。
+- `/memory_reject 文件名`：拒绝并删除候选记忆。
+
 当前最小冲突策略：
 
 - 结构化长期记忆会先做简单去重，避免同一条内容重复追加。

@@ -23,5 +23,8 @@ data/
 workspace/
 workspace_course/
 
+# Local test notes/checklists
+.local-tests/
+
 # Local models can be large and machine-specific
 models/
