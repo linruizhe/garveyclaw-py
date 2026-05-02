@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import httpx
 
 from hiclaw.agent_response import AgentImage, AgentReply
-from hiclaw.claude_client import AGENT_LOCK, build_system_prompt
+from hiclaw.claude_client import build_system_prompt
 from hiclaw.config import (
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
@@ -27,6 +27,7 @@ from hiclaw.config import (
 )
 from hiclaw.delivery import MessageSender
 from hiclaw.memory_store import append_conversation_record, build_context_snapshot
+from hiclaw.runtime_locks import acquire_runtime_lock
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +318,7 @@ async def run_openai_image_agent(
     image_prompt = extract_user_image_prompt(prompt, record_text)
 
     try:
-        async with AGENT_LOCK:
+        async with acquire_runtime_lock(session_scope, "openai-image"):
             if uploaded_image is not None:
                 payload = await call_image_edit_api(image_prompt, uploaded_image)
             else:
@@ -357,7 +358,7 @@ async def run_openai_agent(
     request_input = build_openai_input(prompt, uploaded_image)
 
     try:
-        async with AGENT_LOCK:
+        async with acquire_runtime_lock(session_scope, "openai"):
             response = await client.responses.create(
                 model=OPENAI_MODEL,
                 instructions=build_openai_instructions(prompt, session_scope),

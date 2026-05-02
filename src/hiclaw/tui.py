@@ -17,7 +17,7 @@ from hiclaw.config import AGENT_PROVIDER, PROJECT_ROOT, SHOW_TOOL_TRACE, TUI_OUT
 from hiclaw.delivery import DeliveryRouter
 from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
 from hiclaw.memory_store import append_memory_candidate, append_structured_long_term_memory
-from hiclaw.scheduler import setup_scheduler
+from hiclaw.scheduler_runtime import start_background_scheduler, stop_background_scheduler
 from hiclaw.task_service import handle_task_command
 from hiclaw.session_store import clear_session_id, get_session_file
 
@@ -378,10 +378,10 @@ async def run_tui() -> None:
     configure_stdio()
     print_header()
     bot = ConsoleBot()
+    conversation = build_tui_conversation(get_tui_scope())
     router = DeliveryRouter()
-    router.register("tui", bot)
-    scheduler = setup_scheduler(router, event_loop=asyncio.get_running_loop())
-    scheduler.start()
+    router.register_conversation(conversation, bot)
+    scheduler_runtime = start_background_scheduler(router)
     try:
         while True:
             try:
@@ -406,7 +406,7 @@ async def run_tui() -> None:
                 print_turn_block("Session", "TUI 连续会话已清空。", subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Fresh session"), accent="32")
                 continue
             if command.startswith("/schedule") or command.startswith("/schedule_in") or command.startswith("/cancel") or command == "/tasks":
-                result = await handle_task_command(build_tui_conversation(get_tui_scope()), prompt)
+                result = await handle_task_command(conversation, prompt)
                 if result.handled:
                     print_turn_block("Schedule", result.message, subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "TUI task"), accent="32")
                     continue
@@ -416,7 +416,7 @@ async def run_tui() -> None:
                 if not prompt:
                     continue
 
-            result = await handle_task_command(build_tui_conversation(get_tui_scope()), prompt)
+            result = await handle_task_command(conversation, prompt)
             if result.handled:
                 print_turn_block("Schedule", result.message, subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "TUI task"), accent="32")
                 continue
@@ -448,7 +448,7 @@ async def run_tui() -> None:
                 print()
                 break
     finally:
-        scheduler.shutdown(wait=False)
+        stop_background_scheduler(scheduler_runtime)
     print("TUI 已退出。")
 
 

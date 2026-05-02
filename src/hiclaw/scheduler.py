@@ -1,18 +1,17 @@
 import logging
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import aiosqlite
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from hiclaw.agent_runtime import run_agent_for_conversation
-from hiclaw.config import SCHEDULER_INTERVAL_SECONDS, TASK_DB_FILE
+from hiclaw.config import SCHEDULER_INTERVAL_SECONDS
 from hiclaw.delivery import DeliveryRouter
 from hiclaw.memory_store import archive_old_memories, auto_promote_candidates, clean_old_conversations, meditate_and_organize_memories
 from hiclaw.runtime_types import ConversationRef
+from hiclaw.task_repository import claim_scheduled_task_record, list_due_task_record_ids, release_claimed_task_record, update_task_record_after_run
 
 logger = logging.getLogger(__name__)
 
@@ -246,138 +245,6 @@ def parse_natural_schedule(text: str) -> ParsedSchedule | None:
     return None
 
 
-async def create_scheduled_task(
-    conversation: ConversationRef,
-    prompt: str,
-    run_at: datetime,
-    schedule_type: str = "once",
-    schedule_value: str | None = None,
-    continue_session: bool = False,
-) -> str:
-    task_id = uuid.uuid4().hex[:8]
-    chat_id = int(conversation.target_id) if conversation.target_id.isdigit() else 0
-    async with aiosqlite.connect(TASK_DB_FILE) as db:
-        await db.execute(
-            """
-            INSERT INTO scheduled_tasks (id, chat_id, channel, target_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                task_id,
-                chat_id,
-                conversation.channel,
-                conversation.target_id,
-                prompt,
-                schedule_type,
-                schedule_value,
-                conversation.session_scope,
-                1 if continue_session else 0,
-                run_at.astimezone(timezone.utc).isoformat(),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await db.commit()
-    return task_id
-
-
-async def list_scheduled_tasks(channel: str | None = None, target_id: str | None = None) -> list[dict[str, Any]]:
-    async with aiosqlite.connect(TASK_DB_FILE) as db:
-        db.row_factory = aiosqlite.Row
-        conditions = ["status = 'active'"]
-        params: list[Any] = []
-        if channel is not None:
-            conditions.append("channel = ?")
-            params.append(channel)
-        if target_id is not None:
-            conditions.append("target_id = ?")
-            params.append(target_id)
-        cursor = await db.execute(
-            f"""
-            SELECT id, chat_id, channel, target_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, status, created_at
-            FROM scheduled_tasks
-            WHERE {' AND '.join(conditions)}
-            ORDER BY next_run ASC
-            """,
-            params,
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-
-async def get_due_tasks() -> list[dict[str, Any]]:
-    now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(TASK_DB_FILE) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            """
-            SELECT *
-            FROM scheduled_tasks
-            WHERE status = 'active' AND next_run <= ?
-            ORDER BY next_run ASC
-            """,
-            (now,),
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-
-async def update_task_after_run(
-    task_id: str,
-    result: str,
-    next_run: datetime | None,
-    status: str,
-) -> None:
-    async with aiosqlite.connect(TASK_DB_FILE) as db:
-        last_run = datetime.now(timezone.utc).isoformat()
-        if next_run is None:
-            await db.execute(
-                """
-                UPDATE scheduled_tasks
-                SET status = ?, last_run = ?, last_result = ?, next_run = NULL
-                WHERE id = ?
-                """,
-                (status, last_run, result, task_id),
-            )
-        else:
-            await db.execute(
-                """
-                UPDATE scheduled_tasks
-                SET status = ?, last_run = ?, last_result = ?, next_run = ?
-                WHERE id = ?
-                """,
-                (
-                    status,
-                    last_run,
-                    result,
-                    next_run.astimezone(timezone.utc).isoformat(),
-                    task_id,
-                ),
-            )
-        await db.commit()
-
-
-async def cancel_scheduled_task(task_id: str, channel: str | None = None, target_id: str | None = None) -> bool:
-    async with aiosqlite.connect(TASK_DB_FILE) as db:
-        conditions = ["id = ?", "status = 'active'"]
-        params: list[Any] = [task_id]
-        if channel is not None:
-            conditions.append("channel = ?")
-            params.append(channel)
-        if target_id is not None:
-            conditions.append("target_id = ?")
-            params.append(target_id)
-        cursor = await db.execute(
-            """
-            UPDATE scheduled_tasks
-            SET status = 'cancelled'
-            WHERE %s
-            """ % " AND ".join(conditions),
-            params,
-        )
-        await db.commit()
-        return cursor.rowcount > 0
-
-
 def compute_next_run_after_execution(task: dict[str, Any]) -> tuple[datetime | None, str]:
     schedule_type = task.get("schedule_type", "once")
     schedule_value = task.get("schedule_value")
@@ -433,7 +300,7 @@ async def execute_scheduled_task(task: dict[str, Any], router: DeliveryRouter) -
     )
 
     try:
-        sender = router.get(conversation.channel)
+        sender = router.get(conversation)
         result = await run_agent_for_conversation(
             prompt=wrapped_prompt,
             conversation=conversation,
@@ -442,11 +309,11 @@ async def execute_scheduled_task(task: dict[str, Any], router: DeliveryRouter) -
         )
         await send_task_text(router, conversation, f"⏰ 定时任务执行结果：\n{result.text}")
         next_run, next_status = compute_next_run_after_execution(task)
-        await update_task_after_run(task_id, result.text, next_run, next_status)
+        await update_task_record_after_run(task_id, result.text, next_run, next_status)
     except RuntimeError as exc:
         logger.exception("Scheduled task sender unavailable: %s", task_id)
         error_text = f"定时任务未执行：通道 `{conversation.channel}` 当前不可用或未注册 sender。错误：{exc}"
-        await update_task_after_run(task_id, error_text, None, "completed")
+        await update_task_record_after_run(task_id, error_text, None, "completed")
     except Exception as exc:
         logger.exception("Scheduled task failed: %s", task_id)
         error_text = f"定时任务执行失败：{exc}"
@@ -454,13 +321,32 @@ async def execute_scheduled_task(task: dict[str, Any], router: DeliveryRouter) -
             await send_task_text(router, conversation, error_text)
         except Exception:
             logger.exception("Scheduled task error delivery failed: %s", task_id)
-        await update_task_after_run(task_id, error_text, None, "completed")
+        await update_task_record_after_run(task_id, error_text, None, "completed")
 
 
 async def check_due_tasks(router: DeliveryRouter) -> None:
-    due_tasks = await get_due_tasks()
-    for task in due_tasks:
-        if not router.has(str(task.get("channel") or "telegram")):
+    due_task_ids = await list_due_task_record_ids()
+    for task_id in due_task_ids:
+        task = await claim_scheduled_task_record(task_id)
+        if task is None:
+            logger.info("Skipped scheduled task claim because it was already claimed: %s", task_id)
+            continue
+        conversation = build_task_conversation(task)
+        if not router.owns(conversation):
+            logger.debug(
+                "Releasing claimed scheduled task %s because current runtime does not own route: key=%s",
+                task.get("id"),
+                conversation.conversation_key,
+            )
+            await release_claimed_task_record(str(task.get("id")))
+            continue
+        if not router.has(conversation):
+            logger.warning(
+                "Skipping scheduled task %s because sender is unavailable: key=%s",
+                task.get("id"),
+                conversation.conversation_key,
+            )
+            await release_claimed_task_record(str(task.get("id")))
             continue
         await execute_scheduled_task(task, router)
 

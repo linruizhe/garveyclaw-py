@@ -1,83 +1,14 @@
 import asyncio
 import logging
-import threading
 import time
 
-from telegram import Bot
-from telegram.error import NetworkError, TelegramError, TimedOut
-
-from hiclaw.config import (
-    FEISHU_APP_ID,
-    FEISHU_APP_SECRET,
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_RESTART_DELAY_SECONDS,
-)
+from hiclaw.channel_registry import get_registered_channels, start_background_channel
 from hiclaw.delivery import DeliveryRouter
-from hiclaw.feishu_bot import FeishuBotAdapter, build_event_handler, build_feishu_client
-from hiclaw.scheduler import setup_scheduler
+from hiclaw.scheduler_runtime import start_background_scheduler, stop_background_scheduler
 from hiclaw.scheduler_store import init_task_db
 from hiclaw.session_store import init_session_db
-from hiclaw.telegram_bot import TelegramMessageSender, build_application, run_polling_options
 
 logger = logging.getLogger(__name__)
-
-
-def _start_feishu_in_thread(client) -> None:
-    """在独立线程中启动飞书 WebSocket 长连接。"""
-
-    import lark_oapi as lark
-
-    from hiclaw.config import FEISHU_APP_ID, FEISHU_APP_SECRET
-
-    event_handler = build_event_handler(client)
-    ws_client = lark.ws.Client(
-        app_id=FEISHU_APP_ID,
-        app_secret=FEISHU_APP_SECRET,
-        event_handler=event_handler,
-        log_level=lark.LogLevel.INFO,
-        auto_reconnect=True,
-    )
-    print("Feishu bot: WebSocket long connection started.")
-    ws_client.start()
-
-
-def _has_feishu_config() -> bool:
-    return bool(FEISHU_APP_ID and FEISHU_APP_SECRET)
-
-
-def _has_telegram_config() -> bool:
-    return bool(TELEGRAM_BOT_TOKEN)
-
-
-def _start_scheduler(router: DeliveryRouter) -> tuple[object, asyncio.AbstractEventLoop, threading.Thread]:
-    ready = threading.Event()
-    state: dict[str, object] = {}
-
-    def run_scheduler_loop() -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        scheduler = setup_scheduler(router, event_loop=loop)
-        scheduler.start()
-        state["loop"] = loop
-        state["scheduler"] = scheduler
-        ready.set()
-        loop.run_forever()
-
-    thread = threading.Thread(target=run_scheduler_loop, daemon=True, name="hiclaw-scheduler")
-    thread.start()
-    ready.wait()
-    return state["scheduler"], state["loop"], thread
-
-
-def _stop_scheduler(scheduler, loop: asyncio.AbstractEventLoop, thread: threading.Thread) -> None:
-    def shutdown_scheduler() -> None:
-        scheduler.shutdown(wait=False)
-        loop.stop()
-
-    if loop.is_running():
-        loop.call_soon_threadsafe(shutdown_scheduler)
-    thread.join(timeout=5)
-    loop.close()
 
 
 def _bootstrap_runtime_state() -> None:
@@ -99,68 +30,45 @@ def main() -> None:
     logging.getLogger("telegram.ext._utils.networkloop").setLevel(logging.CRITICAL)
     logging.getLogger("telegram.ext._updater").setLevel(logging.CRITICAL)
 
-    if not _has_feishu_config() and not _has_telegram_config():
-        raise RuntimeError("Neither TELEGRAM_BOT_TOKEN nor FEISHU_APP_ID/FEISHU_APP_SECRET is configured.")
+    available_channels = [channel for channel in get_registered_channels() if channel.enabled()]
+    if not available_channels:
+        raise RuntimeError(
+            "Neither TELEGRAM_BOT_TOKEN nor FEISHU_APP_ID/FEISHU_APP_SECRET is configured. "
+            "If you only want a local console, run `hiclaw-tui`."
+        )
 
-    channels = []
-    if _has_telegram_config():
-        channels.append("Telegram")
-    if _has_feishu_config():
-        channels.append("Feishu")
-    print(f"Starting channels: {', '.join(channels)}")
+    print(f"Starting channels: {', '.join(channel.name for channel in available_channels)}")
 
     _bootstrap_runtime_state()
     router = DeliveryRouter()
+    for channel in available_channels:
+        channel.register_sender(router)
 
-    if _has_telegram_config():
-        router.register("telegram", TelegramMessageSender(Bot(token=TELEGRAM_BOT_TOKEN)))
+    scheduler_runtime = start_background_scheduler(router)
 
-    feishu_client = None
-    if _has_feishu_config():
-        feishu_client = build_feishu_client()
-        router.register("feishu", FeishuBotAdapter(feishu_client))
+    background_threads = []
+    foreground_runner = None
+    if available_channels:
+        foreground_runner = available_channels[0].start()
+    for channel in available_channels[1:]:
+        starter = channel.start()
+        if starter is not None:
+            background_threads.append(start_background_channel(channel.name, starter))
 
-    scheduler, scheduler_loop, scheduler_thread = _start_scheduler(router)
-
-    # 如果同时配置了飞书，在独立线程中启动，不阻塞 Telegram 主循环。
-    if _has_feishu_config():
-        feishu_thread = threading.Thread(target=_start_feishu_in_thread, args=(feishu_client,), daemon=True, name="feishu-ws")
-        feishu_thread.start()
-        # 等飞书连接建立，确保线程启动成功。
+    if background_threads:
         time.sleep(2)
 
     try:
-        # Telegram 在主线程中运行（阻塞）。
-        if _has_telegram_config():
-            while True:
-                try:
-                    app = build_application()
-                    app.run_polling(**run_polling_options())
-                except KeyboardInterrupt:
-                    print("Bot stopped.")
-                    break
-                except (TimedOut, NetworkError, TelegramError) as exc:
-                    logger.warning(
-                        "Telegram polling failed: %s. Restarting in %s seconds...",
-                        exc.__class__.__name__,
-                        TELEGRAM_RESTART_DELAY_SECONDS,
-                    )
-                    time.sleep(TELEGRAM_RESTART_DELAY_SECONDS)
-                except Exception:
-                    logger.exception(
-                        "Bot crashed unexpectedly. Restarting in %s seconds...",
-                        TELEGRAM_RESTART_DELAY_SECONDS,
-                    )
-                    time.sleep(TELEGRAM_RESTART_DELAY_SECONDS)
-        else:
-            # 只有飞书时，阻塞主线程防止退出。
+        if foreground_runner is not None:
+            foreground_runner.start()
+        elif background_threads:
             print("Telegram not configured. Waiting for Feishu...")
             try:
-                feishu_thread.join()
+                background_threads[0].join()
             except KeyboardInterrupt:
                 print("Bot stopped.")
     finally:
-        _stop_scheduler(scheduler, scheduler_loop, scheduler_thread)
+        stop_background_scheduler(scheduler_runtime)
 
 
 if __name__ == "__main__":

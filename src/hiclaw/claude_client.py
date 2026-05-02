@@ -25,6 +25,7 @@ from hiclaw.config import (
 )
 from hiclaw.delivery import MessageSender, send_sender_text
 from hiclaw.memory_store import append_conversation_record, build_context_snapshot
+from hiclaw.runtime_locks import acquire_runtime_lock
 from hiclaw.session_store import load_session_id, save_session_id
 from hiclaw.skill_store import build_skill_prompt
 
@@ -32,11 +33,6 @@ if TYPE_CHECKING:
     from telegram import Update
 
 logger = logging.getLogger(__name__)
-
-# 所有通道当前共用一把锁，优先保证连续会话和上下文落盘安全；
-# 后续如果多通道并发量上来，再考虑按 session_scope 细化锁粒度。
-AGENT_LOCK = asyncio.Lock()
-
 
 class ClaudeServiceError(Exception):
     """统一表示模型调用失败。"""
@@ -147,7 +143,7 @@ async def run_agent(
     )
 
     try:
-        async with AGENT_LOCK:
+        async with acquire_runtime_lock(session_scope, "claude"):
             response, latest_session_id = await collect_agent_response(prompt, options)
             if not response and saved_session_id:
                 logger.warning("Claude returned empty response while resuming session %s; retrying without resume.", saved_session_id)

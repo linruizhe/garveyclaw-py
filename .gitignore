@@ -31,3 +31,9 @@ tests/
 
 # Local models can be large and machine-specific
 models/
+
+# Local architecture / planning session files
+ARCHITECTURE.md
+task_plan.md
+findings.md
+progress.md

@@ -5,12 +5,44 @@ from datetime import datetime, timedelta, timezone
 
 from hiclaw.runtime_types import ConversationRef
 from hiclaw.scheduler import (
-    cancel_scheduled_task,
-    create_scheduled_task,
     format_schedule_description,
-    list_scheduled_tasks,
     parse_natural_schedule,
 )
+from hiclaw.task_repository import (
+    cancel_scheduled_task_record,
+    create_scheduled_task_record,
+    list_scheduled_task_records,
+)
+import uuid
+
+
+async def create_scheduled_task(
+    conversation: ConversationRef,
+    prompt: str,
+    run_at: datetime,
+    schedule_type: str = "once",
+    schedule_value: str | None = None,
+    continue_session: bool = False,
+) -> str:
+    task_id = uuid.uuid4().hex[:8]
+    await create_scheduled_task_record(
+        task_id=task_id,
+        conversation=conversation,
+        prompt=prompt,
+        run_at=run_at,
+        schedule_type=schedule_type,
+        schedule_value=schedule_value,
+        continue_session=continue_session,
+    )
+    return task_id
+
+
+async def list_scheduled_tasks(channel: str | None = None, target_id: str | None = None):
+    return await list_scheduled_task_records(channel=channel, target_id=target_id)
+
+
+async def cancel_scheduled_task(task_id: str, channel: str | None = None, target_id: str | None = None) -> bool:
+    return await cancel_scheduled_task_record(task_id, channel=channel, target_id=target_id)
 
 
 @dataclass(frozen=True, slots=True)
