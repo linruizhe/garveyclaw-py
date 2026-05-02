@@ -254,6 +254,20 @@ python -m hiclaw
 hiclaw
 ```
 
+`hiclaw` 是通道聚合入口，至少需要配置一种远程消息通道：
+
+- Telegram：只配置 `TELEGRAM_BOT_TOKEN` 也可以启动。
+- 飞书：只配置 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 也可以启动。
+- Telegram + 飞书：同时配置即可。
+
+如果你暂时不想配置任何远程通道，只想先在本地体验，请直接运行：
+
+```powershell
+hiclaw-tui
+```
+
+如果运行 `hiclaw` 时一个通道都没有配置，程序会直接提示你改用 `hiclaw-tui`。
+
 启动成功后，终端会显示：
 
 ```text
@@ -282,7 +296,7 @@ python -m hiclaw.tui
 hiclaw-tui
 ```
 
-TUI 复用 `AGENT_PROVIDER`、`WORKSPACE_DIR`、memory、skills 和 Agent 工具链；TUI 使用独立会话文件 `data/hiclaw_session_tui.json`，不会覆盖其他入口的连续会话。当前采用稳定的串行交互模式：单行输入按 `Enter` 直接发送，多行内容建议使用 `/paste`。常用命令：
+TUI 复用 `AGENT_PROVIDER`、`WORKSPACE_DIR`、memory、skills 和 Agent 工具链；TUI 使用独立会话文件 `data/hiclaw_session_tui.json`，不会覆盖其他入口的连续会话。每个 TUI 进程都会生成独立实例 scope 和独立 sender 路由，因此多个 TUI 实例可以并行运行而不串消息。当前采用稳定的串行交互模式：单行输入按 `Enter` 直接发送，多行内容建议使用 `/paste`。常用命令：
 
 - `/help`：查看命令。
 - `/reset`：清空 TUI 独立连续会话。
@@ -332,10 +346,12 @@ python -m hiclaw.feishu_bot
 
 当前各入口对应的默认 scope 说明：
 
-- Telegram：`telegram`
-- TUI：`tui`
+- Telegram：`telegram:chat:{chat_id}`
+- TUI：`tui:{instance_id}`
 - 飞书私聊：`feishu:p2p:{open_id}`
 - 飞书群聊：`feishu:chat:{chat_id}`
+
+当前系统内部统一使用 `ConversationRef(channel, target_id, session_scope)` 作为共享会话标识；消息回投优先按 `conversation_key = {channel}:{target_id}` 精确路由。
 
 ## 交互入口示例
 
@@ -395,19 +411,26 @@ hiclaw-py/
 │     ├─ agent_response.py
 │     ├─ agent_tools.py
 │     ├─ app.py
+│     ├─ channel_registry.py
 │     ├─ claude_client.py
 │     ├─ config.py
+│     ├─ delivery.py
 │     ├─ feishu_bot.py
 │     ├─ media_store.py
 │     ├─ memory_frequency.py
 │     ├─ memory_intent.py
 │     ├─ memory_store.py
 │     ├─ openai_client.py
+│     ├─ runtime_locks.py
+│     ├─ runtime_types.py
 │     ├─ scheduler.py
+│     ├─ scheduler_runtime.py
 │     ├─ scheduler_store.py
 │     ├─ session_store.py
 │     ├─ skill_store.py
 │     ├─ speech_client.py
+│     ├─ task_repository.py
+│     ├─ task_service.py
 │     ├─ telegram_bot.py
 │     ├─ telegram_formatting.py
 │     └─ tui.py
@@ -422,25 +445,56 @@ hiclaw-py/
 
 核心模块说明：
 
-- `app.py`：统一程序入口，负责根据当前配置启动已启用的消息入口。
+- `app.py`：统一程序入口，当前已收缩为薄组合根，负责 bootstrap、初始化 router、启动 scheduler 和启用的远程通道。
+- `channel_registry.py`：集中定义 Telegram / 飞书通道是否启用、如何注册 sender、以及如何启动各自 runner。
 - `config.py`：读取 `.env` 并提供全局配置。
 - `access.py`：Owner 权限判断。
 - `telegram_bot.py`：Telegram 入口的命令、文本、图片、语音和异常处理。
 - `feishu_bot.py`：飞书入口的消息接入、白名单校验、图片下载和回复。
 - `tui.py`：本地 PowerShell TUI 入口。
-- `agent_client.py`：统一 Agent 路由层，根据 `AGENT_PROVIDER` 分发到 Claude 或 OpenAI Provider。
+- `agent_client.py`：统一 Agent 路由层，根据 `AGENT_PROVIDER` 分发到 Claude 或 OpenAI Provider，并构造各入口对应的 `ConversationRef`。
+- `runtime_types.py`：定义 `ConversationRef` 和统一的 `conversation_key` 派生规则。
+- `delivery.py`：定义 `MessageSender` 和 `DeliveryRouter`，负责按 conversation 优先、channel 回退的方式路由消息。
 - `claude_client.py`：封装 Claude Agent SDK、工具配置、会话恢复、记忆和 Skill 注入。
 - `openai_client.py`：封装 OpenAI 文本、图片理解、图片生成/编辑能力。
+- `runtime_locks.py`：统一管理运行时会话级锁，保证同会话串行、跨会话并行，并提供锁统计与清理。
 - `agent_tools.py`：自定义 MCP 工具。
 - `media_store.py`：处理图片和语音上传数据。
 - `speech_client.py`：语音识别抽象层，目前支持 Vosk。
 - `memory_store.py`：分层记忆、工作记忆、会话摘要、候选记忆治理、对话记录、自动提升、冥想整理、归档和对话日志清理。
 - `session_store.py`：连续会话 `session_id` 读写，支持文件锁并发保护、超时自动清除、SQLite 异步 API。
-- `scheduler.py`：定时任务解析、创建、执行和管理，支持 session 上下文延续。
-- `scheduler_store.py`：定时任务 SQLite 表初始化和读写，支持 session_scope 和 continue_session 字段。
+- `task_service.py`：统一处理 `/schedule_in`、`/schedule`、`/tasks`、`/cancel` 等任务命令与自然语言任务入口。
+- `task_repository.py`：统一处理任务持久化、due-task 查询、claim、release 和 post-run 更新。
+- `scheduler.py`：负责自然语言时间解析、任务执行、周期任务 next-run 计算，以及基于 claim 的到期任务消费。
+- `scheduler_runtime.py`：负责后台 scheduler loop 的独立线程生命周期，避免依赖具体通道主循环。
+- `scheduler_store.py`：定时任务 SQLite 表初始化与兼容迁移。
 - `skill_store.py`：Skill 加载和查询。
 - `telegram_formatting.py`：把常见 Markdown 转成 Telegram 可渲染 HTML。
 - `agent_response.py`：统一文本/图片回复结果结构。
+
+## 定时任务与调度说明
+
+当前定时任务系统采用一张共享任务表，三个入口共用同一套命令解析和执行模型：
+
+- `task_service.py`：命令入口与校验
+- `task_repository.py`：数据库读写、claim、release、状态更新
+- `scheduler.py`：扫描、claim 成功后执行、更新 next run
+
+当前任务状态至少包含：
+
+- `active`
+- `running`
+- `completed`
+- `cancelled`
+
+为避免多进程或多实例重复执行，同一条到期任务会先被原子 claim，只有 claim 成功的运行时才会继续执行。
+
+消息回投时，scheduler 会优先判断当前运行时是否拥有该任务的 conversation route：
+
+- TUI 只处理当前实例拥有的 TUI 任务
+- app 模式下 Telegram / 飞书各自处理自己能回投的任务
+
+这可以避免多个 TUI 实例串消息，也减少无关运行时对其他通道任务的噪音日志。
 
 ## 运行数据
 
