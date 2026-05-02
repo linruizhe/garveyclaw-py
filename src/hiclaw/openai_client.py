@@ -25,6 +25,7 @@ from hiclaw.config import (
     OPENAI_IMAGE_TIMEOUT_SECONDS,
     OPENAI_MODEL,
 )
+from hiclaw.delivery import MessageSender
 from hiclaw.memory_store import append_conversation_record, build_context_snapshot
 
 logger = logging.getLogger(__name__)
@@ -305,7 +306,12 @@ async def call_image_edit_api(image_prompt: str, uploaded_image: Any) -> dict[st
         return await parse_image_response(response)
 
 
-async def run_openai_image_agent(prompt: str, record_text: str | None, uploaded_image: Any | None) -> AgentReply:
+async def run_openai_image_agent(
+    prompt: str,
+    record_text: str | None,
+    uploaded_image: Any | None,
+    session_scope: str | None = None,
+) -> AgentReply:
     """调用 OpenAI Images API；有上传图时编辑图片，否则从文本生成图片。"""
 
     image_prompt = extract_user_image_prompt(prompt, record_text)
@@ -329,14 +335,14 @@ async def run_openai_image_agent(prompt: str, record_text: str | None, uploaded_
         raise RuntimeError("OpenAI image service returned no image data.")
 
     text = "图片已生成。"
-    append_conversation_record(record_text or prompt, text, None)
+    append_conversation_record(record_text or prompt, text, None, session_scope)
     return AgentReply(text=text, images=images)
 
 
 async def run_openai_agent(
     prompt: str,
-    bot,
-    chat_id: int,
+    sender: MessageSender,
+    target_id: str | int,
     continue_session: bool,
     record_text: str | None = None,
     uploaded_image: Any | None = None,
@@ -345,7 +351,7 @@ async def run_openai_agent(
     """第一版 OpenAI Provider：支持文本、图片理解和图片生成/编辑。"""
 
     if wants_image_output(prompt, record_text, uploaded_image):
-        return await run_openai_image_agent(prompt, record_text, uploaded_image)
+        return await run_openai_image_agent(prompt, record_text, uploaded_image, session_scope)
 
     client = build_openai_client()
     request_input = build_openai_input(prompt, uploaded_image)

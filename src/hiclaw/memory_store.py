@@ -435,6 +435,7 @@ def build_context_snapshot(scope: str | None = None) -> str:
     session_summary = load_session_summary(scope)
     sections: list[str] = []
 
+    # 长期记忆按用户全局共享；工作记忆和会话摘要按 session_scope 隔离。
     for key, title in (
         ("profile", "用户画像"),
         ("preferences", "用户偏好"),

@@ -4,13 +4,15 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hiclaw.config import AGENT_PROVIDER
+from hiclaw.delivery import MessageSender
 from hiclaw.agent_response import AgentReply
+from hiclaw.runtime_types import ConversationRef
 
 if TYPE_CHECKING:
+    from hiclaw.feishu_bot import FeishuIncomingMessage
     from telegram import Update
 
 logger = logging.getLogger(__name__)
-TELEGRAM_SESSION_SCOPE = "telegram"
 
 
 class AgentServiceError(Exception):
@@ -21,32 +23,44 @@ def normalize_provider_name() -> str:
     return AGENT_PROVIDER.strip().lower()
 
 
-async def ask_agent(
-    prompt: str,
-    update: "Update",
-    record_text: str | None = None,
-    uploaded_image: Any | None = None,
-) -> AgentReply:
-    """Telegram 消息统一入口，根据配置选择具体模型 Provider。"""
-
+def build_telegram_session_scope(update: "Update") -> str:
     if not update.effective_chat:
         raise AgentServiceError("Missing Telegram chat context.")
+    return f"telegram:chat:{update.effective_chat.id}"
 
-    return await run_agent(
-        prompt=prompt,
-        bot=update.get_bot(),
-        chat_id=update.effective_chat.id,
-        continue_session=True,
-        record_text=record_text,
-        uploaded_image=uploaded_image,
-        session_scope=TELEGRAM_SESSION_SCOPE,
+
+def build_telegram_conversation(update: "Update") -> ConversationRef:
+    if not update.effective_chat:
+        raise AgentServiceError("Missing Telegram chat context.")
+    return ConversationRef(
+        channel="telegram",
+        target_id=str(update.effective_chat.id),
+        session_scope=build_telegram_session_scope(update),
+        user_id=str(update.effective_user.id) if update.effective_user else None,
+    )
+
+
+def build_feishu_conversation(incoming: "FeishuIncomingMessage", scope: str) -> ConversationRef:
+    return ConversationRef(
+        channel="feishu",
+        target_id=incoming.chat_id,
+        session_scope=scope,
+        user_id=incoming.sender_open_id or None,
+    )
+
+
+def build_tui_conversation(instance_scope: str) -> ConversationRef:
+    return ConversationRef(
+        channel="tui",
+        target_id=instance_scope,
+        session_scope=instance_scope,
     )
 
 
 async def run_agent(
     prompt: str,
-    bot,
-    chat_id: int,
+    sender: MessageSender,
+    target_id: str | int,
     continue_session: bool,
     record_text: str | None = None,
     uploaded_image: Any | None = None,
@@ -62,8 +76,8 @@ async def run_agent(
 
             text = await run_claude_agent(
                 prompt=prompt,
-                bot=bot,
-                chat_id=chat_id,
+                sender=sender,
+                target_id=target_id,
                 continue_session=continue_session,
                 record_text=record_text,
                 uploaded_image=uploaded_image,
@@ -76,8 +90,8 @@ async def run_agent(
 
             return await run_openai_agent(
                 prompt=prompt,
-                bot=bot,
-                chat_id=chat_id,
+                sender=sender,
+                target_id=target_id,
                 continue_session=continue_session,
                 record_text=record_text,
                 uploaded_image=uploaded_image,

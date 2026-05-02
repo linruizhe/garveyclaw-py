@@ -8,6 +8,7 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from hiclaw.config import WORKSPACE_DIR
+from hiclaw.delivery import MessageSender, send_sender_text
 
 
 def resolve_workspace_path(relative_path: str) -> Path:
@@ -84,23 +85,23 @@ async def read_workspace_file(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_mcp_server(bot: Any, chat_id: int, uploaded_image: Any | None = None):
-    """构造当前 Telegram 会话可用的 MCP 工具集合。"""
+def build_mcp_server(sender: MessageSender, target_id: str | int, uploaded_image: Any | None = None):
+    """构造当前会话可用的 MCP 工具集合。"""
 
-    @tool("send_message", "向当前 Telegram 会话额外发送一条消息。", {"text": str})
+    @tool("send_message", "向当前会话额外发送一条消息。", {"text": str})
     async def send_message(args: dict[str, Any]) -> dict[str, Any]:
         text = args["text"]
-        await bot.send_message(chat_id=chat_id, text=text)
+        await send_sender_text(sender, target_id, text)
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": "Message sent to the Telegram chat successfully.",
+                    "text": "Message sent to the current conversation successfully.",
                 }
             ]
         }
 
-    @tool("get_uploaded_image", "获取本轮 Telegram 上传的图片内容。", {})
+    @tool("get_uploaded_image", "获取本轮上传的图片内容。", {})
     async def get_uploaded_image(_: dict[str, Any]) -> dict[str, Any]:
         if uploaded_image is None:
             return {
@@ -112,7 +113,7 @@ def build_mcp_server(bot: Any, chat_id: int, uploaded_image: Any | None = None):
             "content": [
                 {
                     "type": "text",
-                    "text": "This is the image uploaded by the Telegram user in the current turn.",
+                    "text": "This is the image uploaded by the user in the current turn.",
                 },
                 {
                     "type": "image",

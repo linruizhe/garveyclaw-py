@@ -8,9 +8,11 @@ from typing import Any
 import aiosqlite
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from hiclaw.agent_client import run_agent
+from hiclaw.agent_runtime import run_agent_for_conversation
 from hiclaw.config import SCHEDULER_INTERVAL_SECONDS, TASK_DB_FILE
+from hiclaw.delivery import DeliveryRouter
 from hiclaw.memory_store import archive_old_memories, auto_promote_candidates, clean_old_conversations, meditate_and_organize_memories
+from hiclaw.runtime_types import ConversationRef
 
 logger = logging.getLogger(__name__)
 
@@ -245,28 +247,30 @@ def parse_natural_schedule(text: str) -> ParsedSchedule | None:
 
 
 async def create_scheduled_task(
-    chat_id: int,
+    conversation: ConversationRef,
     prompt: str,
     run_at: datetime,
     schedule_type: str = "once",
     schedule_value: str | None = None,
-    session_scope: str | None = None,
     continue_session: bool = False,
 ) -> str:
     task_id = uuid.uuid4().hex[:8]
+    chat_id = int(conversation.target_id) if conversation.target_id.isdigit() else 0
     async with aiosqlite.connect(TASK_DB_FILE) as db:
         await db.execute(
             """
-            INSERT INTO scheduled_tasks (id, chat_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO scheduled_tasks (id, chat_id, channel, target_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
                 chat_id,
+                conversation.channel,
+                conversation.target_id,
                 prompt,
                 schedule_type,
                 schedule_value,
-                session_scope,
+                conversation.session_scope,
                 1 if continue_session else 0,
                 run_at.astimezone(timezone.utc).isoformat(),
                 datetime.now(timezone.utc).isoformat(),
@@ -276,16 +280,25 @@ async def create_scheduled_task(
     return task_id
 
 
-async def list_scheduled_tasks() -> list[dict[str, Any]]:
+async def list_scheduled_tasks(channel: str | None = None, target_id: str | None = None) -> list[dict[str, Any]]:
     async with aiosqlite.connect(TASK_DB_FILE) as db:
         db.row_factory = aiosqlite.Row
+        conditions = ["status = 'active'"]
+        params: list[Any] = []
+        if channel is not None:
+            conditions.append("channel = ?")
+            params.append(channel)
+        if target_id is not None:
+            conditions.append("target_id = ?")
+            params.append(target_id)
         cursor = await db.execute(
-            """
-            SELECT id, chat_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, status, created_at
+            f"""
+            SELECT id, chat_id, channel, target_id, prompt, schedule_type, schedule_value, session_scope, continue_session, next_run, status, created_at
             FROM scheduled_tasks
-            WHERE status = 'active'
+            WHERE {' AND '.join(conditions)}
             ORDER BY next_run ASC
-            """
+            """,
+            params,
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -343,15 +356,23 @@ async def update_task_after_run(
         await db.commit()
 
 
-async def cancel_scheduled_task(task_id: str) -> bool:
+async def cancel_scheduled_task(task_id: str, channel: str | None = None, target_id: str | None = None) -> bool:
     async with aiosqlite.connect(TASK_DB_FILE) as db:
+        conditions = ["id = ?", "status = 'active'"]
+        params: list[Any] = [task_id]
+        if channel is not None:
+            conditions.append("channel = ?")
+            params.append(channel)
+        if target_id is not None:
+            conditions.append("target_id = ?")
+            params.append(target_id)
         cursor = await db.execute(
             """
             UPDATE scheduled_tasks
             SET status = 'cancelled'
-            WHERE id = ? AND status = 'active'
-            """,
-            (task_id,),
+            WHERE %s
+            """ % " AND ".join(conditions),
+            params,
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -388,41 +409,60 @@ def compute_next_run_after_execution(task: dict[str, Any]) -> tuple[datetime | N
     return None, "completed"
 
 
-async def execute_scheduled_task(task: dict[str, Any], bot) -> None:
+def build_task_conversation(task: dict[str, Any]) -> ConversationRef:
+    channel = str(task.get("channel") or "telegram")
+    target_id = str(task.get("target_id") or task.get("chat_id") or "")
+    session_scope = str(task.get("session_scope") or f"{channel}:scheduled:{target_id}")
+    return ConversationRef(channel=channel, target_id=target_id, session_scope=session_scope)
+
+
+async def send_task_text(router: DeliveryRouter, conversation: ConversationRef, text: str) -> None:
+    await router.send_text(conversation, text)
+
+
+async def execute_scheduled_task(task: dict[str, Any], router: DeliveryRouter) -> None:
     task_id = task["id"]
-    chat_id = task["chat_id"]
     prompt = task["prompt"]
-    session_scope = task.get("session_scope")
     continue_session = bool(task.get("continue_session", False))
+    conversation = build_task_conversation(task)
 
     wrapped_prompt = (
         "你正在执行一条定时任务。"
-        "请根据任务要求完成回答；如果需要额外主动通知 Telegram，请使用 send_message 工具。\n\n"
+        "请根据任务要求完成回答；如果需要额外主动通知当前会话，请使用 send_message 工具。\n\n"
         f"任务内容：{prompt}"
     )
 
     try:
-        result = await run_agent(
+        sender = router.get(conversation.channel)
+        result = await run_agent_for_conversation(
             prompt=wrapped_prompt,
-            bot=bot,
-            chat_id=chat_id,
+            conversation=conversation,
+            sender=sender,
             continue_session=continue_session,
-            session_scope=session_scope,
         )
-        await bot.send_message(chat_id=chat_id, text=f"⏰ 定时任务执行结果：\n{result.text}")
+        await send_task_text(router, conversation, f"⏰ 定时任务执行结果：\n{result.text}")
         next_run, next_status = compute_next_run_after_execution(task)
         await update_task_after_run(task_id, result.text, next_run, next_status)
+    except RuntimeError as exc:
+        logger.exception("Scheduled task sender unavailable: %s", task_id)
+        error_text = f"定时任务未执行：通道 `{conversation.channel}` 当前不可用或未注册 sender。错误：{exc}"
+        await update_task_after_run(task_id, error_text, None, "completed")
     except Exception as exc:
         logger.exception("Scheduled task failed: %s", task_id)
         error_text = f"定时任务执行失败：{exc}"
-        await bot.send_message(chat_id=chat_id, text=error_text)
+        try:
+            await send_task_text(router, conversation, error_text)
+        except Exception:
+            logger.exception("Scheduled task error delivery failed: %s", task_id)
         await update_task_after_run(task_id, error_text, None, "completed")
 
 
-async def check_due_tasks(bot) -> None:
+async def check_due_tasks(router: DeliveryRouter) -> None:
     due_tasks = await get_due_tasks()
     for task in due_tasks:
-        await execute_scheduled_task(task, bot)
+        if not router.has(str(task.get("channel") or "telegram")):
+            continue
+        await execute_scheduled_task(task, router)
 
 
 async def run_memory_maintenance() -> None:
@@ -459,13 +499,13 @@ async def run_conversation_cleanup() -> None:
         logger.exception("Conversation cleanup failed")
 
 
-def setup_scheduler(bot) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler()
+def setup_scheduler(router: DeliveryRouter, event_loop=None) -> AsyncIOScheduler:
+    scheduler = AsyncIOScheduler(event_loop=event_loop)
     scheduler.add_job(
         check_due_tasks,
         "interval",
         seconds=SCHEDULER_INTERVAL_SECONDS,
-        args=[bot],
+        args=[router],
         id="hiclaw_check_tasks",
         replace_existing=True,
     )

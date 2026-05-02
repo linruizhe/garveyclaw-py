@@ -6,6 +6,8 @@ TASK_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
     id TEXT PRIMARY KEY,
     chat_id INTEGER NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'telegram',
+    target_id TEXT,
     prompt TEXT NOT NULL,
     schedule_type TEXT NOT NULL DEFAULT 'once',
     schedule_value TEXT,
@@ -31,6 +33,10 @@ async def init_task_db() -> None:
         table_info = await cursor.fetchall()
         columns = {row[1] for row in table_info}
 
+        if "channel" not in columns:
+            await db.execute("ALTER TABLE scheduled_tasks ADD COLUMN channel TEXT NOT NULL DEFAULT 'telegram'")
+        if "target_id" not in columns:
+            await db.execute("ALTER TABLE scheduled_tasks ADD COLUMN target_id TEXT")
         if "schedule_type" not in columns:
             await db.execute(
                 "ALTER TABLE scheduled_tasks ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'once'"
@@ -49,6 +55,8 @@ async def init_task_db() -> None:
                 CREATE TABLE IF NOT EXISTS scheduled_tasks_new (
                     id TEXT PRIMARY KEY,
                     chat_id INTEGER NOT NULL,
+                    channel TEXT NOT NULL DEFAULT 'telegram',
+                    target_id TEXT,
                     prompt TEXT NOT NULL,
                     schedule_type TEXT NOT NULL DEFAULT 'once',
                     schedule_value TEXT,
@@ -61,10 +69,10 @@ async def init_task_db() -> None:
                     last_result TEXT
                 );
                 INSERT INTO scheduled_tasks_new (
-                    id, chat_id, prompt, schedule_type, schedule_value, next_run, status, created_at, last_run, last_result
+                    id, chat_id, channel, target_id, prompt, schedule_type, schedule_value, next_run, status, created_at, last_run, last_result
                 )
                 SELECT
-                    id, chat_id, prompt, schedule_type, schedule_value, next_run, status, created_at, last_run, last_result
+                    id, chat_id, 'telegram', CAST(chat_id AS TEXT), prompt, schedule_type, schedule_value, next_run, status, created_at, last_run, last_result
                 FROM scheduled_tasks;
                 DROP TABLE scheduled_tasks;
                 ALTER TABLE scheduled_tasks_new RENAME TO scheduled_tasks;

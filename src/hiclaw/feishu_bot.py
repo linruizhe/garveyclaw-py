@@ -5,6 +5,7 @@ import json
 import logging
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import lark_oapi as lark
@@ -15,7 +16,8 @@ from lark_oapi.api.im.v1 import (
     P2ImMessageReceiveV1,
 )
 
-from hiclaw.agent_client import AgentServiceError, run_agent
+from hiclaw.agent_client import AgentServiceError, build_feishu_conversation
+from hiclaw.agent_runtime import run_agent_for_conversation
 from hiclaw.agent_response import AgentReply
 from hiclaw.config import (
     FEISHU_ALLOWED_CHAT_IDS,
@@ -26,9 +28,11 @@ from hiclaw.config import (
     FEISHU_SESSION_SCOPE_PREFIX,
     SHOW_TOOL_TRACE,
 )
+from hiclaw.feishu_formatting import format_feishu_text
 from hiclaw.media_store import PhotoPayload
 from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
 from hiclaw.memory_store import append_memory_candidate, append_structured_long_term_memory
+from hiclaw.task_service import handle_task_command
 from hiclaw.session_store import clear_session_id
 
 logger = logging.getLogger(__name__)
@@ -59,8 +63,11 @@ class FeishuIncomingMessage:
 class FeishuBotAdapter:
     client: lark.Client
 
-    async def send_message(self, chat_id: str, text: str) -> None:
-        await send_text_message(self.client, chat_id, text)
+    async def send_text(self, target_id: str, text: str) -> None:
+        await send_text_message(self.client, target_id, text)
+
+    async def send_message(self, chat_id: str | int, text: str) -> None:
+        await self.send_text(str(chat_id), text)
 
 
 def ensure_feishu_config() -> None:
@@ -167,20 +174,11 @@ async def download_image(client: lark.Client, message_id: str, file_key: str) ->
 
 
 async def send_text_message(client: lark.Client, chat_id: str, text: str) -> None:
-    """发送交互式富文本卡片消息，lark_md 原生支持 Markdown 渲染。"""
+    """发送更稳定的纯文本消息，避免不同 Markdown 方言在飞书里渲染错乱。"""
 
-    if not text.strip():
+    formatted = format_feishu_text(text)
+    if not formatted:
         return
-
-    card = {
-        "config": {"wide_screen_mode": True},
-        "elements": [
-            {
-                "tag": "div",
-                "text": {"content": text, "tag": "lark_md"},
-            },
-        ],
-    }
 
     request = (
         CreateMessageRequest.builder()
@@ -188,8 +186,8 @@ async def send_text_message(client: lark.Client, chat_id: str, text: str) -> Non
         .request_body(
             CreateMessageRequestBody.builder()
             .receive_id(chat_id)
-            .msg_type("interactive")
-            .content(json.dumps(card, ensure_ascii=False))
+            .msg_type("text")
+            .content(json.dumps({"text": formatted}, ensure_ascii=False))
             .build()
         )
         .build()
@@ -225,6 +223,21 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
         await send_text_message(client, incoming.chat_id, "当前会话已清空，下一条消息会开启新会话。")
         return
 
+    conversation = build_feishu_conversation(incoming, build_session_scope(incoming))
+    text = incoming.text.strip()
+    lower_text = text.lower()
+
+    if lower_text.startswith("/schedule") or lower_text.startswith("/schedule_in") or lower_text.startswith("/cancel") or lower_text == "/tasks":
+        task_result = await handle_task_command(conversation, text)
+        if task_result.handled:
+            await send_text_message(client, incoming.chat_id, task_result.message)
+            return
+
+    task_result = await handle_task_command(conversation, text)
+    if task_result.handled:
+        await send_text_message(client, incoming.chat_id, task_result.message)
+        return
+
     if FEISHU_REPLY_PROCESSING_MESSAGE:
         await send_text_message(client, incoming.chat_id, "收到，正在处理...")
 
@@ -242,7 +255,7 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
             )
             record_text = f"[Feishu] 用户上传了一张图片。说明：{caption}"
         else:
-            memory_intent = detect_memory_intent(incoming.text)
+            memory_intent = detect_memory_intent(text)
             if memory_intent is not None:
                 if should_auto_accept_memory_intent(memory_intent):
                     target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
@@ -251,18 +264,17 @@ async def handle_message(client: lark.Client, incoming: FeishuIncomingMessage) -
                     candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
                     await send_text_message(client, incoming.chat_id, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
                 return
-            prompt = incoming.text
-            record_text = f"[Feishu] {incoming.text}"
+            prompt = text
+            record_text = f"[Feishu] {text}"
             photo_payload = None
 
-        reply = await run_agent(
+        reply = await run_agent_for_conversation(
             prompt=prompt,
-            bot=bot,
-            chat_id=incoming.chat_id,
+            conversation=conversation,
+            sender=bot,
             continue_session=True,
             record_text=record_text,
             uploaded_image=photo_payload,
-            session_scope=build_session_scope(incoming),
         )
         await reply_agent_result(client, incoming.chat_id, reply)
     except AgentServiceError as exc:

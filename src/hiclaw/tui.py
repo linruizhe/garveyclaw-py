@@ -4,20 +4,25 @@ import asyncio
 import os
 import shutil
 import sys
+import uuid
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from hiclaw.agent_client import AgentServiceError, run_agent
+from hiclaw.agent_client import AgentServiceError, build_tui_conversation
+from hiclaw.agent_runtime import run_agent_for_conversation
 from hiclaw.agent_response import AgentReply
 from hiclaw.config import AGENT_PROVIDER, PROJECT_ROOT, SHOW_TOOL_TRACE, TUI_OUTPUT_DIR, WORKSPACE_DIR
+from hiclaw.delivery import DeliveryRouter
 from hiclaw.memory_intent import build_memory_intent_ack, detect_memory_intent, should_auto_accept_memory_intent
 from hiclaw.memory_store import append_memory_candidate, append_structured_long_term_memory
+from hiclaw.scheduler import setup_scheduler
+from hiclaw.task_service import handle_task_command
 from hiclaw.session_store import clear_session_id, get_session_file
 
-TUI_SESSION_SCOPE = "tui"
-TUI_CHAT_ID = 0
+TUI_SESSION_SCOPE_PREFIX = "tui"
+TUI_INSTANCE_ID = os.getenv("HICLAW_TUI_INSTANCE_ID", f"pid{os.getpid()}_{uuid.uuid4().hex[:8]}")
 MIN_PANEL_WIDTH = 72
 PROMPT = "> "
 
@@ -32,6 +37,9 @@ COMMANDS = [
     CommandInfo("/help", "查看帮助"),
     CommandInfo("/reset", "清空 TUI 独立连续会话"),
     CommandInfo("/provider", "查看当前 Agent Provider"),
+    CommandInfo("/schedule_in", "创建单次定时任务"),
+    CommandInfo("/tasks", "查看当前 TUI 定时任务"),
+    CommandInfo("/cancel", "取消指定定时任务"),
     CommandInfo("/paste", "进入多行输入，单独一行 . 结束"),
     CommandInfo("/exit", "退出"),
 ]
@@ -39,8 +47,15 @@ COMMANDS = [
 
 @dataclass(slots=True)
 class ConsoleBot:
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_text(self, target_id: str, text: str) -> None:
         print_turn_block("Agent message", text, accent="33")
+
+    async def send_message(self, chat_id: str | int, text: str) -> None:
+        await self.send_text(str(chat_id), text)
+
+
+def get_tui_scope() -> str:
+    return f"{TUI_SESSION_SCOPE_PREFIX}:{TUI_INSTANCE_ID}"
 
 
 def configure_stdio() -> None:
@@ -148,7 +163,7 @@ def build_logo_lines() -> list[str]:
 def print_header() -> None:
     width = terminal_width()
     rule = "─" * (width - 2)
-    session_file = get_session_file(TUI_SESSION_SCOPE)
+    session_file = get_session_file(get_tui_scope())
     print(color(f"╭{rule}╮", "36"))
     print(box_line_center("", width, "36"))
     for line in build_logo_lines():
@@ -306,9 +321,10 @@ def save_reply_images(reply: AgentReply) -> list[Path]:
         return saved_paths
     TUI_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    instance_suffix = TUI_INSTANCE_ID.replace(":", "_")
     for index, image in enumerate(reply.images, 1):
         suffix = image.mime_type.removeprefix("image/") or "png"
-        target = TUI_OUTPUT_DIR / f"generated_{timestamp}_{index}.{suffix}"
+        target = TUI_OUTPUT_DIR / f"generated_{instance_suffix}_{timestamp}_{index}.{suffix}"
         target.write_bytes(image.data)
         saved_paths.append(target)
     return saved_paths
@@ -343,13 +359,12 @@ async def submit_prompt(prompt: str, bot: ConsoleBot) -> None:
     stop_event = asyncio.Event()
     indicator_task = asyncio.create_task(run_thinking_indicator(stop_event))
     try:
-        reply = await run_agent(
+        reply = await run_agent_for_conversation(
             prompt=prompt,
-            bot=bot,
-            chat_id=TUI_CHAT_ID,
+            conversation=build_tui_conversation(get_tui_scope()),
+            sender=bot,
             continue_session=True,
             record_text=f"[PowerShell TUI] {prompt}",
-            session_scope=TUI_SESSION_SCOPE,
         )
     finally:
         stop_event.set()
@@ -363,58 +378,77 @@ async def run_tui() -> None:
     configure_stdio()
     print_header()
     bot = ConsoleBot()
-    while True:
-        try:
-            prompt = await asyncio.to_thread(read_prompt)
-        except EOFError:
-            print()
-            break
-        prompt = prompt.strip()
-        if not prompt:
-            continue
-        command = prompt.lower()
-        if command in {"/exit", "/quit", "exit", "quit"}:
-            break
-        if command == "/help":
-            print_help()
-            continue
-        if command == "/provider":
-            print_turn_block("Provider", f"当前 Provider: {AGENT_PROVIDER}", subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Runtime"), accent="32")
-            continue
-        if command == "/reset":
-            clear_session_id(TUI_SESSION_SCOPE)
-            print_turn_block("Session", "TUI 连续会话已清空。", subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Fresh session"), accent="32")
-            continue
-        if command == "/paste":
-            prompt = await asyncio.to_thread(read_multiline)
+    router = DeliveryRouter()
+    router.register("tui", bot)
+    scheduler = setup_scheduler(router, event_loop=asyncio.get_running_loop())
+    scheduler.start()
+    try:
+        while True:
+            try:
+                prompt = await asyncio.to_thread(read_prompt)
+            except EOFError:
+                print()
+                break
+            prompt = prompt.strip()
             if not prompt:
                 continue
-        memory_intent = detect_memory_intent(prompt)
-        if memory_intent is not None:
-            if should_auto_accept_memory_intent(memory_intent):
-                target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
-                print_turn_block(
-                    "Memory",
-                    build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name),
-                    subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Structured memory"),
-                    accent="32",
-                )
-            else:
-                candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
-                print_turn_block(
-                    "Memory",
-                    build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name),
-                    subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Candidate memory"),
-                    accent="33",
-                )
-            continue
-        try:
-            await submit_prompt(prompt, bot)
-        except AgentServiceError as exc:
-            print_turn_block("Error", str(exc), subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), AGENT_PROVIDER.upper(), "Failure"), accent="31")
-        except KeyboardInterrupt:
-            print()
-            break
+            command = prompt.lower()
+            if command in {"/exit", "/quit", "exit", "quit"}:
+                break
+            if command == "/help":
+                print_help()
+                continue
+            if command == "/provider":
+                print_turn_block("Provider", f"当前 Provider: {AGENT_PROVIDER}", subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Runtime"), accent="32")
+                continue
+            if command == "/reset":
+                clear_session_id(get_tui_scope())
+                print_turn_block("Session", "TUI 连续会话已清空。", subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Fresh session"), accent="32")
+                continue
+            if command.startswith("/schedule") or command.startswith("/schedule_in") or command.startswith("/cancel") or command == "/tasks":
+                result = await handle_task_command(build_tui_conversation(get_tui_scope()), prompt)
+                if result.handled:
+                    print_turn_block("Schedule", result.message, subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "TUI task"), accent="32")
+                    continue
+                continue
+            if command == "/paste":
+                prompt = await asyncio.to_thread(read_multiline)
+                if not prompt:
+                    continue
+
+            result = await handle_task_command(build_tui_conversation(get_tui_scope()), prompt)
+            if result.handled:
+                print_turn_block("Schedule", result.message, subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "TUI task"), accent="32")
+                continue
+
+            memory_intent = detect_memory_intent(prompt)
+            if memory_intent is not None:
+                if should_auto_accept_memory_intent(memory_intent):
+                    target = append_structured_long_term_memory(memory_intent.content, memory_intent.category, memory_intent.slot)
+                    print_turn_block(
+                        "Memory",
+                        build_memory_intent_ack(memory_intent, True, SHOW_TOOL_TRACE, target.name),
+                        subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Structured memory"),
+                        accent="32",
+                    )
+                else:
+                    candidate_file = append_memory_candidate(memory_intent.content, memory_intent.category, memory_intent.reason, memory_intent.slot)
+                    print_turn_block(
+                        "Memory",
+                        build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name),
+                        subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), "Candidate memory"),
+                        accent="33",
+                    )
+                continue
+            try:
+                await submit_prompt(prompt, bot)
+            except AgentServiceError as exc:
+                print_turn_block("Error", str(exc), subtitle=build_meta_subtitle(datetime.now().strftime("%H:%M:%S"), AGENT_PROVIDER.upper(), "Failure"), accent="31")
+            except KeyboardInterrupt:
+                print()
+                break
+    finally:
+        scheduler.shutdown(wait=False)
     print("TUI 已退出。")
 
 

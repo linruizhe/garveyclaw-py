@@ -23,6 +23,7 @@ from hiclaw.config import (
     SHOW_TOOL_TRACE,
     WORKSPACE_DIR,
 )
+from hiclaw.delivery import MessageSender, send_sender_text
 from hiclaw.memory_store import append_conversation_record, build_context_snapshot
 from hiclaw.session_store import load_session_id, save_session_id
 from hiclaw.skill_store import build_skill_prompt
@@ -32,7 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 所有 Agent 调用共用一把锁，避免普通消息和定时任务同时并发执行。
+# 所有通道当前共用一把锁，优先保证连续会话和上下文落盘安全；
+# 后续如果多通道并发量上来，再考虑按 session_scope 细化锁粒度。
 AGENT_LOCK = asyncio.Lock()
 
 
@@ -60,7 +62,7 @@ def build_system_prompt(prompt: str, session_scope: str | None = None) -> str:
 
 规则：
 1. 当用户询问文件、目录或当前时间时，优先使用工具。
-2. 如果需要额外主动给 Telegram 发送一条消息，请使用 send_message 工具。
+2. 如果需要额外主动给当前会话发送一条消息，请使用 send_message 工具。
 3. 不要编造文件内容；如果需要文件数据，就调用工具读取。
 4. 如果使用 Bash，请优先选择当前环境更稳妥的命令。
 5. 当前环境里不要默认使用 `python3`，优先尝试 `python`。
@@ -74,19 +76,19 @@ def build_system_prompt(prompt: str, session_scope: str | None = None) -> str:
 """.strip()
 
 
-def build_tool_hooks(bot, chat_id: int) -> dict[str, list[HookMatcher]]:
-    """构造工具执行过程的 Telegram 状态通知。"""
+def build_tool_hooks(sender: MessageSender, target_id: str | int) -> dict[str, list[HookMatcher]]:
+    """构造工具执行过程的当前会话状态通知。"""
 
     async def notify_tool_start(hook_input, tool_use_id, context) -> dict:
-        await bot.send_message(chat_id=chat_id, text=f"[Tool Start] {hook_input['tool_name']}")
+        await send_sender_text(sender, target_id, f"[Tool Start] {hook_input['tool_name']}")
         return {}
 
     async def notify_tool_finish(hook_input, tool_use_id, context) -> dict:
-        await bot.send_message(chat_id=chat_id, text=f"[Tool Done] {hook_input['tool_name']}")
+        await send_sender_text(sender, target_id, f"[Tool Done] {hook_input['tool_name']}")
         return {}
 
     async def notify_tool_failure(hook_input, tool_use_id, context) -> dict:
-        await bot.send_message(chat_id=chat_id, text=f"[Tool Failed] {hook_input['tool_name']}: {hook_input['error']}")
+        await send_sender_text(sender, target_id, f"[Tool Failed] {hook_input['tool_name']}: {hook_input['error']}")
         return {}
 
     return {
@@ -114,31 +116,10 @@ async def collect_agent_response(prompt: str, options: ClaudeAgentOptions) -> tu
     return (final_result or "\n".join(text_parts)).strip(), latest_session_id
 
 
-async def ask_claude(
-    prompt: str,
-    update: "Update",
-    record_text: str | None = None,
-    uploaded_image: Any | None = None,
-) -> str:
-    """处理来自 Telegram 的普通消息调用。"""
-
-    if not update.effective_chat:
-        raise ClaudeServiceError("Missing Telegram chat context.")
-
-    return await run_agent(
-        prompt=prompt,
-        bot=update.get_bot(),
-        chat_id=update.effective_chat.id,
-        continue_session=True,
-        record_text=record_text,
-        uploaded_image=uploaded_image,
-    )
-
-
 async def run_agent(
     prompt: str,
-    bot,
-    chat_id: int,
+    sender: MessageSender,
+    target_id: str | int,
     continue_session: bool,
     record_text: str | None = None,
     uploaded_image: Any | None = None,
@@ -146,7 +127,7 @@ async def run_agent(
 ) -> str:
     """运行一次 Claude Agent，并负责 session 与对话记录落盘。"""
 
-    tool_server = build_mcp_server(bot=bot, chat_id=chat_id, uploaded_image=uploaded_image)
+    tool_server = build_mcp_server(sender=sender, target_id=target_id, uploaded_image=uploaded_image)
     saved_session_id = load_session_id(session_scope) if continue_session else None
     options = ClaudeAgentOptions(
         permission_mode="acceptEdits",
@@ -160,7 +141,7 @@ async def run_agent(
         system_prompt=build_system_prompt(prompt, session_scope),
         mcp_servers={"hiclaw": tool_server},
         allowed_tools=ALLOWED_TOOLS,
-        hooks=build_tool_hooks(bot, chat_id) if SHOW_TOOL_TRACE else {},
+        hooks=build_tool_hooks(sender, target_id) if SHOW_TOOL_TRACE else {},
         continue_conversation=continue_session and bool(saved_session_id),
         resume=saved_session_id,
     )
@@ -182,7 +163,7 @@ async def run_agent(
                     system_prompt=build_system_prompt(prompt, session_scope),
                     mcp_servers={"hiclaw": tool_server},
                     allowed_tools=ALLOWED_TOOLS,
-                    hooks=build_tool_hooks(bot, chat_id) if SHOW_TOOL_TRACE else {},
+                    hooks=build_tool_hooks(sender, target_id) if SHOW_TOOL_TRACE else {},
                     continue_conversation=False,
                     resume=None,
                 )

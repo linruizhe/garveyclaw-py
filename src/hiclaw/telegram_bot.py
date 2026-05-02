@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 
@@ -15,8 +16,9 @@ from telegram.ext import (
 )
 
 from hiclaw.access import is_owner
+from hiclaw.agent_runtime import run_agent_for_conversation
 from hiclaw.agent_response import AgentReply
-from hiclaw.agent_client import AgentServiceError, ask_agent
+from hiclaw.agent_client import AgentServiceError, build_telegram_conversation
 from hiclaw.config import (
     TELEGRAM_BOOTSTRAP_RETRIES,
     TELEGRAM_BOT_TOKEN,
@@ -37,22 +39,24 @@ from hiclaw.memory_store import (
     load_long_term_memory,
     reject_memory_candidate,
 )
-from hiclaw.scheduler import (
-    cancel_scheduled_task,
-    create_scheduled_task,
-    format_schedule_description,
-    list_scheduled_tasks,
-    parse_natural_schedule,
-    setup_scheduler,
-)
-from hiclaw.scheduler_store import init_task_db
-from hiclaw.session_store import clear_session_id, init_session_db
+from hiclaw.task_service import handle_task_command
+from hiclaw.session_store import clear_session_id
 from hiclaw.skill_store import get_skill, list_skills
 from hiclaw.speech_client import SpeechRecognitionError, transcribe_voice
 from hiclaw.telegram_formatting import format_telegram_text
 
 logger = logging.getLogger(__name__)
-TELEGRAM_SESSION_SCOPE = "telegram"
+
+
+@dataclass(slots=True)
+class TelegramMessageSender:
+    bot: object
+
+    async def send_text(self, target_id: str, text: str) -> None:
+        await self.bot.send_message(chat_id=int(target_id), text=text)
+
+    async def send_message(self, chat_id: str | int, text: str) -> None:
+        await self.send_text(str(chat_id), text)
 
 
 async def reply_plain_text(update: Update, text: str) -> None:
@@ -107,31 +111,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     try:
-        natural_schedule = parse_natural_schedule(update.message.text)
-        if natural_schedule is not None:
-            chat_id = update.effective_chat.id if update.effective_chat else None
-            if chat_id is None:
-                await reply_plain_text(update, "当前消息没有可用的 chat_id。")
+        if update.effective_chat is not None:
+            task_result = await handle_task_command(build_telegram_conversation(update), update.message.text)
+            if task_result.handled:
+                await reply_plain_text(update, task_result.message)
                 return
-
-            task_id = await create_scheduled_task(
-                chat_id=chat_id,
-                prompt=natural_schedule.prompt,
-                run_at=natural_schedule.run_at,
-                schedule_type=natural_schedule.schedule_type,
-                schedule_value=natural_schedule.schedule_value,
-                session_scope=TELEGRAM_SESSION_SCOPE,
-            )
-            local_time = natural_schedule.run_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            await reply_plain_text(
-                update,
-                "我已按自然语言理解为一条定时任务。\n"
-                f"- 任务ID：{task_id}\n"
-                f"- 类型：{format_schedule_description(natural_schedule.schedule_type, natural_schedule.schedule_value)}\n"
-                f"- 执行时间：{local_time}\n"
-                f"- 内容：{natural_schedule.prompt}",
-            )
-            return
 
         memory_intent = detect_memory_intent(update.message.text)
         if memory_intent is not None:
@@ -143,7 +127,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await reply_plain_text(update, build_memory_intent_ack(memory_intent, False, SHOW_TOOL_TRACE, candidate_file.name))
             return
 
-        response = await ask_agent(update.message.text, update)
+        response = await run_agent_for_conversation(
+            prompt=update.message.text,
+            conversation=build_telegram_conversation(update),
+            sender=update.get_bot(),
+        )
         await reply_agent_result(update, response)
     except AgentServiceError as exc:
         await reply_plain_text(update, f"抱歉，这次调用模型服务失败了：{exc}")
@@ -177,9 +165,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "再结合图片和用户说明进行分析，并直接给出有帮助的中文回答。"
         )
         record_text = f"用户上传了一张图片。说明：{caption_text}"
-        response = await ask_agent(
+        response = await run_agent_for_conversation(
             prompt=prompt,
-            update=update,
+            conversation=build_telegram_conversation(update),
+            sender=update.get_bot(),
             record_text=record_text,
             uploaded_image=photo_payload,
         )
@@ -214,7 +203,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"语音转写文本：{transcript}\n\n"
             "请把这条语音转写文本当作用户的真实输入来处理。"
         )
-        response = await ask_agent(prompt, update)
+        response = await run_agent_for_conversation(
+            prompt=prompt,
+            conversation=build_telegram_conversation(update),
+            sender=update.get_bot(),
+        )
         await reply_agent_result(update, response)
     except SpeechRecognitionError as exc:
         logger.warning("Speech recognition failed", exc_info=True)
@@ -258,7 +251,7 @@ async def reset_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_owner(update):
         return
 
-    clear_session_id(TELEGRAM_SESSION_SCOPE)
+    clear_session_id(build_telegram_conversation(update).session_scope)
     await update.message.reply_text("当前会话已清空，下一条消息会开启新会话。")
 
 
@@ -413,13 +406,13 @@ async def schedule_in(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await reply_plain_text(update, "任务内容不能为空。")
         return
 
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    if chat_id is None:
+    if update.effective_chat is None:
         await reply_plain_text(update, "当前消息没有可用的 chat_id。")
         return
 
     run_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-    task_id = await create_scheduled_task(chat_id, prompt, run_at)
+    conversation = build_telegram_conversation(update)
+    task_id = await create_scheduled_task(conversation, prompt, run_at)
     local_time = run_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     await reply_plain_text(
         update,
@@ -439,18 +432,8 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not is_owner(update):
         return
 
-    tasks = await list_scheduled_tasks()
-    if not tasks:
-        await reply_plain_text(update, "当前没有待执行的定时任务。")
-        return
-
-    lines = ["当前待执行任务："]
-    for task in tasks:
-        local_time = datetime.fromisoformat(task["next_run"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        schedule_desc = format_schedule_description(task.get("schedule_type", "once"), task.get("schedule_value"))
-        lines.append(f"- {task['id']} | {schedule_desc} | {local_time} | {task['prompt']}")
-
-    await reply_plain_text(update, "\n".join(lines))
+    task_result = await handle_task_command(build_telegram_conversation(update), "/tasks")
+    await reply_plain_text(update, task_result.message)
 
 
 async def cancel_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -461,32 +444,14 @@ async def cancel_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not is_owner(update):
         return
 
-    if not context.args:
-        await reply_plain_text(update, "用法：/cancel 任务ID")
-        return
-
-    task_id = context.args[0].strip()
-    success = await cancel_scheduled_task(task_id)
-    if success:
-        await reply_plain_text(update, f"任务 {task_id} 已取消。")
-    else:
-        await reply_plain_text(update, f"没有找到可取消的任务：{task_id}")
+    task_result = await handle_task_command(build_telegram_conversation(update), f"/cancel {' '.join(context.args)}".strip())
+    await reply_plain_text(update, task_result.message)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """兜底记录没有被局部 handler 处理的异常。"""
 
     logger.error("Unhandled exception in Telegram application", exc_info=context.error)
-
-
-async def post_init(application: Application) -> None:
-    """启动时初始化数据库并拉起调度器。"""
-
-    await init_task_db()
-    await init_session_db()
-    scheduler = setup_scheduler(application.bot)
-    scheduler.start()
-    application.bot_data["scheduler"] = scheduler
 
 
 def build_application() -> Application:
@@ -506,7 +471,6 @@ def build_application() -> Application:
         .get_updates_read_timeout(TELEGRAM_READ_TIMEOUT)
         .get_updates_write_timeout(TELEGRAM_WRITE_TIMEOUT)
         .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT)
-        .post_init(post_init)
         .build()
     )
     app.add_handler(CommandHandler("start", start))
